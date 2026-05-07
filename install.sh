@@ -549,7 +549,7 @@ provision_do_droplet() {
   fi
 
   local region size name ip
-  printf "  Droplet name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Droplet name [%sclaude%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-claude}"
   printf "  Region [%sfra1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fra1}"
   printf "  Size [%ss-4vcpu-8gb%s] (~\$48/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-s-4vcpu-8gb}"
 
@@ -602,7 +602,7 @@ provision_hetzner() {
   fi
 
   local region size name ip
-  printf "  Server name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Server name [%sclaude%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-claude}"
   printf "  Location [%sfsn1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fsn1}"
   printf "  Type [%scax21%s] (~€7/mo, ARM): " "$c_blue" "$c_reset"; read -r size; size="${size:-cax21}"
 
@@ -641,7 +641,7 @@ provision_linode() {
   detect_or_generate_ssh_key
 
   local region size name pubkey ip
-  printf "  Linode label [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Linode label [%sclaude%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-claude}"
   printf "  Region [%seu-central%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-eu-central}"
   printf "  Type [%sg6-standard-2%s] (~\$24/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-g6-standard-2}"
 

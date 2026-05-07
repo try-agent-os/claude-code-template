@@ -11,6 +11,7 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ### Changed
 - Docs: README now documents git-clone install (Method A) as the recommended path; curl one-liner kept as Method B.
+- `install.sh` — default droplet/server/Linode label changed from `agentos` to `claude` (lines 552, 605, 644). Matches the SSH alias users naturally pick to invoke their AgentOS host (`ssh claude`, `claude` desktop entry, etc.).
 
 ### Fixed (hotfix-tty-redirect: interactive prompts under curl-pipe)
 - `install.sh` invoked via `curl ... | bash` had stdin attached to the script-body pipe, so every interactive `read` got immediate EOF and the wizard skipped through every prompt with empty answers. Added a tty-redirect block right after the Darwin+sudo guard (before `detect_mode`): when stdin is not a TTY but `/dev/tty` exists, `exec </dev/tty` reroutes stdin to the controlling terminal so all `read` prompts wait for the user. Headless CI (no `/dev/tty`) is unaffected. One-line fix that covers every interactive prompt in the wizard.
