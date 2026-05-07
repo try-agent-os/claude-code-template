@@ -6,6 +6,10 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Fixed (hotfix-tty-redirect: interactive prompts under curl-pipe)
+- `install.sh` invoked via `curl ... | bash` had stdin attached to the script-body pipe, so every interactive `read` got immediate EOF and the wizard skipped through every prompt with empty answers. Added a tty-redirect block right after the Darwin+sudo guard (before `detect_mode`): when stdin is not a TTY but `/dev/tty` exists, `exec </dev/tty` reroutes stdin to the controlling terminal so all `read` prompts wait for the user. Headless CI (no `/dev/tty`) is unaffected. One-line fix that covers every interactive prompt in the wizard.
+- Pre-flight internet check changed from `curl -fsS https://api.anthropic.com/v1/models` to `curl -sI https://api.anthropic.com/`. The `/v1/models` endpoint requires auth and returns 401, which `-f` treated as failure — so the warning fired even on healthy networks. HEAD-only on the root host validates DNS+TCP+TLS without needing an API key.
+
 ### Fixed (hotfix-mac-bash32: macOS bash 3.2 + curl-pipe + sudo guard)
 - `install.sh` line 78 used `${BASH_SOURCE[0]}` directly under `set -u`. When piped via `curl ... | bash` on macOS, BASH_SOURCE[0] is empty/unset and the script aborted with `unbound variable`. Replaced with a `${BASH_SOURCE[0]:-${0:-/dev/stdin}}` fallback chain plus an `[ -f "$_SELF" ]` guard that leaves `SCRIPT_DIR=""` when there is no on-disk script (Mac branch git-clones the template anyway).
 - `${var,,}` lowercase parameter expansion is bash 4+; macOS system bash is 3.2.57. All 8 occurrences (lines 212, 402, 554, 587, 607, 724, 739, 1057) replaced with a `lower()` helper that uses `tr '[:upper:]' '[:lower:]'`. Added a matching `upper()` helper for symmetry.
