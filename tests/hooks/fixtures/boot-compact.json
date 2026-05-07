@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "SessionStart",
+  "matcher": "compact",
+  "session_id": "test-session-017",
+  "cwd": "/tmp",
+  "_test": {
+    "hook": "boot",
+    "args": ["compact"],
+    "expected_exit": 0,
+    "comment": "Reads memory/context.md if exists; silent exit 0 if not"
+  }
+}

@@ -20,8 +20,8 @@ log "$PATH_FIELD"
 ABS_PATH="$PATH_FIELD"
 case "$ABS_PATH" in
   /*) ;;
-  ~/*) ABS_PATH="${HOME}${ABS_PATH#~}" ;;
-  *)  ABS_PATH="$(pwd)/${ABS_PATH}" ;;
+  '~/'*) ABS_PATH="${HOME}/${ABS_PATH#'~/'}" ;;
+  *)     ABS_PATH="$(pwd)/${ABS_PATH}" ;;
 esac
 
 # .env files

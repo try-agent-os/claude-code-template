@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/some/project/package-lock.json"
+  },
+  "session_id": "test-session-011",
+  "_test": {
+    "hook": "guard-edit",
+    "expected_exit": 2,
+    "expected_stderr_contains": "lockfile"
+  }
+}
