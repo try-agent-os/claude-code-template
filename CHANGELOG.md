@@ -6,6 +6,9 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Fixed
+- `install.sh` — `ssh_config_add_alias` now rewrites stale Host entry on reprovision (was: silently kept old IP, causing `wait_until_ssh_ready` to hang on dead droplet).
+
 ### Changed
 - Docs: README now documents git-clone install (Method A) as the recommended path; curl one-liner kept as Method B.
 

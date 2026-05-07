@@ -353,6 +353,8 @@ require_cli() {
 }
 
 # Append (idempotent) an SSH alias to ~/.ssh/config.
+# On reprovision: if Host alias exists with a different HostName, strip the
+# stale block and append a fresh one (also clears stale known_hosts entries).
 ssh_config_add_alias() {
   local alias="$1" ip="$2" user="${3:-root}" identity="${4:-$HOME/.ssh/id_ed25519}"
   local cfg="$HOME/.ssh/config"
@@ -360,8 +362,27 @@ ssh_config_add_alias() {
   touch "$cfg"
   chmod 600 "$cfg"
   if grep -qE "^Host[[:space:]]+${alias}\$" "$cfg" 2>/dev/null; then
-    info "  ~/.ssh/config already has Host '$alias' — leaving as is."
-    return
+    local existing_ip
+    existing_ip=$(awk -v a="$alias" '
+      $1=="Host" && $2==a { in_block=1; next }
+      $1=="Host" { in_block=0 }
+      in_block && tolower($1)=="hostname" { print $2; exit }
+    ' "$cfg")
+    if [ "$existing_ip" = "$ip" ]; then
+      info "  ~/.ssh/config Host '$alias' HostName matches ($ip), leaving as is."
+      return
+    fi
+    info "  ~/.ssh/config Host '$alias' HostName ${existing_ip:-<unset>} → $ip — updating."
+    awk -v a="$alias" '
+      $1=="Host" && $2==a { skip=1; next }
+      $1=="Host" { skip=0 }
+      !skip { print }
+    ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg" && chmod 600 "$cfg"
+    ssh-keygen -R "$alias" >/dev/null 2>&1 || true
+    if [ -n "$existing_ip" ]; then
+      ssh-keygen -R "$existing_ip" >/dev/null 2>&1 || true
+    fi
+    ssh-keygen -R "$ip" >/dev/null 2>&1 || true
   fi
   cat >> "$cfg" <<EOF
 
