@@ -25,17 +25,18 @@ State of personal-owned files (must NOT be overwritten):
 
 ## File ownership rules
 
-**Template-managed (T)** — synced from upstream:
-- `agents/{sysadmin,operator,heartbeat}/CLAUDE.md`, SOUL.md, scripts (dispatcher.sh, worker-launcher.sh, etc.), `.mcp.json`
-- `scripts/`, `systemd/`, `launchd/`, `plugins/`, `skills/` (shared)
-- `install.sh`, `uninstall.sh`, `verify.sh`
-- `README.md`, `ARCHITECTURE.md`, `UPGRADING.md`, `CHANGELOG.md`, `CLAUDE.md` (root)
-- `.claude/`, `.claude-plugin/`
+The authoritative ownership manifest is [`.template-ownership.json`](../../../../.template-ownership.json) at the repo root. Read it via jq, never hardcode paths in this skill.
 
-**Personal-owned (P)** — never overwritten by sync:
-- `memory/` (all files including memory/contacts/, memory/postmortems/*.md non-TEMPLATE)
-- `.env`, `.mcp.json` (rendered, not template), `logs/`
-- Anything user added in `studio/`, `clients/`, etc.
+Template-managed (T) globs — overwritten by sync from upstream:
+!`jq -r '.template_managed[]' "${CLAUDE_PROJECT_DIR}/.template-ownership.json" 2>/dev/null | sed 's/^/- /' || echo "(.template-ownership.json missing — upgrade template before syncing)"`
+
+Personal-owned (P) globs — NEVER overwritten:
+!`jq -r '.personal_owned[]' "${CLAUDE_PROJECT_DIR}/.template-ownership.json" 2>/dev/null | sed 's/^/- /' || echo "(.template-ownership.json missing)"`
+
+Generated paths (created by install.sh / runtime, ignored on sync):
+!`jq -r '.generated[]' "${CLAUDE_PROJECT_DIR}/.template-ownership.json" 2>/dev/null | sed 's/^/- /' || echo "(.template-ownership.json missing)"`
+
+If a file matches both T and P globs (rare), P wins — the user's data is sacred.
 
 ## Workflow
 

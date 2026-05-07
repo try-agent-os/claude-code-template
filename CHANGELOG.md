@@ -6,6 +6,15 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+## 2026-05-07 — Wave 3: T01 + T07 + T11 + T12 merged
+
+- T01: full novostudio→template skeleton (~76 files, ~10K LOC, 11 commits).
+- T07: `scripts/verify.sh` (1012 LOC, ~50 checks) + `uninstall.sh` enhancements (`--keep-data`, `--purge-credentials`).
+- T11: `.claude/settings.json` + 8 lifecycle hooks + helper (`_common.sh`).
+- T11-tests: 17 hook smoke fixtures (all pass) + bug fix in `guard-edit.sh` tilde expansion.
+- T12: README + ARCHITECTURE + UPGRADING (extensive).
+- T06-amend4: install.sh Mac-branch order hardening, `--minimal` truly subsets installer (skip telegram/operator/whisper/telegram-coupled hooks), `.template-ownership.json` machine-readable manifest, removed stale launchd plists for plugins (claude-peers + telegram).
+
 ### Added
 - Three-tier agent topology: `sysadmin`, `operator`, `heartbeat`.
 - saga-mcp + claude-peers + telegram-mcp default bundle, all wired via `.mcp.json` per agent.
