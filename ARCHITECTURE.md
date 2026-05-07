@@ -307,9 +307,11 @@ Hardening defaults applied to every unit:
 
 See [`systemd/README.md`](./systemd/README.md) for the full hardening rationale.
 
-### macOS (launchd) — manual today
+### macOS (launchd) — parity templates, not the canonical path
 
-[`launchd/`](./launchd/) contains plist templates (with `${PROJECT_SLUG}` placeholders) for the same supervised processes:
+The supported macOS workflow is **not** to run AgentOS as a long-running stack on the Mac. Instead, `install.sh` detects Darwin (via `detect_mode` — `uname == Darwin`) and dispatches to `exec_remote_setup_wizard`, which provisions/targets a Linux VPS and runs the canonical `install.sh` there over SSH. See [README.md → How it works on Mac](./README.md#how-it-works-on-mac) for the user-facing flow.
+
+[`launchd/`](./launchd/) still contains plist templates (with `${PROJECT_SLUG}` placeholders) for the same supervised processes — kept around for parity with the systemd units and for users who want to experiment with running operator/dispatcher on a Mac directly:
 
 | Plist | Job |
 |-------|-----|
@@ -319,7 +321,7 @@ See [`systemd/README.md`](./systemd/README.md) for the full hardening rationale.
 | `com.${PROJECT_SLUG}.claude-peers-broker.plist` | **Stale** — assumes claude-peers is a separate broker, not the current stdio plugin. |
 | `com.${PROJECT_SLUG}.telegram-mcp.plist` | **Stale** — same reason. |
 
-The current `install.sh` is Linux-only (it `fail`s on non-Ubuntu/Debian `/etc/os-release`). Mac users who want the same setup must currently substitute the plist placeholders by hand (`${PROJECT_SLUG}`, `${INSTALL_ROOT}`, `${BUN_PATH}`, etc.) and `launchctl load` the result. Long term, `install.sh` should detect Darwin and render plists; that work is tracked separately.
+`install.sh` does not render or `launchctl load` these plists today — that's intentional, because the supported Mac path is "wizard provisions a Linux VPS", not "stand up launchd on this Mac". If you want a local-Mac deployment you must substitute the placeholders by hand (`${PROJECT_SLUG}`, `${INSTALL_ROOT}`, `${BUN_PATH}`, etc.) and `launchctl load` the result yourself.
 
 ### Per-agent CLAUDE_CONFIG_DIR
 
