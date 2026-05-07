@@ -241,6 +241,8 @@ After a plugin update, only the source code is replaced. Runtime state survives.
 >
 > **2026-05-07 — initial release:** N/A. There's nothing to migrate from.
 >
+> **2026-05-07 — T06-amend6: multi-admin Telegram allowlist (non-breaking).** New env vars `TELEGRAM_ADMIN_USER_IDS` (comma-separated) and `TELEGRAM_ADMIN_USERNAMES` (display only) replace the single-admin `TELEGRAM_USER_ID` as the canonical source. Existing deployments keep working — `TELEGRAM_USER_ID` is still honoured as a fallback when `TELEGRAM_ADMIN_USER_IDS` is empty, and install.sh now writes both. New deploys via the Mac wizard auto-populate `TELEGRAM_ADMIN_USER_IDS` from `/start` polling (Step 4b) and pass it through to the remote install. To upgrade an existing install: re-run `install.sh` (idempotent) — it will re-write `/etc/agent-os/agent-os.env` with the new vars, defaulting `TELEGRAM_ADMIN_USER_IDS` to the existing `TELEGRAM_USER_ID`. To add more admins, edit the env file directly and restart `agent-os-operator.service` (the telegram MCP plugin re-seeds the admin list at every startup).
+>
 > A change is "breaking" if any of the following is true:
 > - A managed-settings field changed name or shape and must be re-rendered.
 > - A systemd unit was renamed (so the previous one must be stopped + disabled before re-install).

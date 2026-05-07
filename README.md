@@ -56,7 +56,7 @@ claude-peers and telegram are **stdio MCP plugins** (not separate services). Cla
 | Plugin | Source | Role |
 |--------|--------|------|
 | `claude-peers@agentos` | [novostudiotech/claude-peers-mcp](https://github.com/novostudiotech/claude-peers-mcp) | Inter-agent messaging + channel push |
-| `telegram@agentos` | [novostudiotech/telegram-mcp](https://github.com/novostudiotech/telegram-mcp) | Telegram bot bridge + channel push (whisper voice + URL transcription) |
+| `telegram@agentos` | [novostudiotech/telegram-mcp](https://github.com/novostudiotech/telegram-mcp) | Telegram bot bridge + channel push (whisper voice + URL transcription, multi-admin allowlist) |
 | `agent-sdk-dev@anthropic` | [anthropics/claude-code](https://github.com/anthropics/claude-code) | Scaffolding for Agent SDK projects |
 | `code-review@anthropic` | [anthropics/claude-code](https://github.com/anthropics/claude-code) | Multi-agent PR review with confidence scoring |
 | `commit-commands@anthropic` | [anthropics/claude-code](https://github.com/anthropics/claude-code) | `/commit`, `/commit-push-pr`, `/clean_gone` |
@@ -245,7 +245,9 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 
 # Telegram
 TELEGRAM_BOT_TOKEN=123456:ABC...
-TELEGRAM_USER_ID=123456789
+TELEGRAM_ADMIN_USER_IDS=123456789,987654321   # comma-separated admin allowlist (multi-admin)
+TELEGRAM_ADMIN_USERNAMES=alice,bob            # parallel display names (optional)
+TELEGRAM_USER_ID=123456789                    # legacy single-admin (= first ID); still honoured
 
 # State paths (defaults are fine)
 DB_PATH=/var/lib/agent-os/saga.db
@@ -367,7 +369,7 @@ journalctl -u agent-os-operator -n 100 --no-pager | grep -i telegram
 sudo -u agent-os tmux attach -t operator
 ```
 
-Confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_USER_ID` are in `/etc/agent-os/agent-os.env`. The bot uses long polling — no webhook required.
+Confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_USER_IDS` (or the legacy `TELEGRAM_USER_ID`) are in `/etc/agent-os/agent-os.env`. The bot uses long polling — no webhook required. Admins listed in `TELEGRAM_ADMIN_USER_IDS` are seeded as `allowed` in the bot's SQLite users table on startup; everyone else hits the default policy (`pending`).
 
 ### Hooks aren't firing
 

@@ -926,6 +926,8 @@ if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
   PROJECT_NAME=$(state_get "project_name" "agentos")
   TIMEZONE=$(state_get "timezone" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")
   TG_USER_ID=$(state_get "tg_user_id" "")
+  TG_ADMIN_USER_IDS=$(state_get "tg_admin_user_ids" "")
+  TG_ADMIN_USERNAMES=$(state_get "tg_admin_usernames" "")
   GIT_REMOTE=$(state_get "git_remote" "")
   WHISPER_MODEL=$(state_get "whisper_model" "$WHISPER_MODEL")
   # Secrets stay in env (already sourced from $ENV_FILE above)
@@ -938,13 +940,24 @@ else
     PROJECT_NAME="${PROJECT_NAME:-$(state_get project_name agentos)}"
     TIMEZONE="${TIMEZONE:-$(state_get timezone "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")}"
     TG_BOT_TOKEN="${TG_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
+    # Multi-admin: prefer env vars from Mac wrapper (Step 4b), fall back to single TG_USER_ID for legacy
+    TG_ADMIN_USER_IDS="${TG_ADMIN_USER_IDS:-$(state_get tg_admin_user_ids "")}"
+    TG_ADMIN_USERNAMES="${TG_ADMIN_USERNAMES:-$(state_get tg_admin_usernames "")}"
     TG_USER_ID="${TG_USER_ID:-$(state_get tg_user_id "")}"
+    if [[ -z "$TG_USER_ID" && -n "$TG_ADMIN_USER_IDS" ]]; then
+      TG_USER_ID="${TG_ADMIN_USER_IDS%%,*}"  # legacy single-admin = first admin
+    fi
+    if [[ -z "$TG_ADMIN_USER_IDS" && -n "$TG_USER_ID" ]]; then
+      TG_ADMIN_USER_IDS="$TG_USER_ID"  # legacy single-admin → seed allowlist
+    fi
     GIT_REMOTE="${GIT_REMOTE:-$(state_get git_remote "")}"
     WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model medium)}"
     # Persist non-secret answers to state
     state_set project_name "$PROJECT_NAME"
     state_set timezone "$TIMEZONE"
     state_set tg_user_id "$TG_USER_ID"
+    state_set tg_admin_user_ids "$TG_ADMIN_USER_IDS"
+    state_set tg_admin_usernames "$TG_ADMIN_USERNAMES"
     state_set git_remote "$GIT_REMOTE"
     state_set whisper_model "$WHISPER_MODEL"
   else
@@ -955,11 +968,26 @@ else
       log "  --minimal: skipping Telegram bot wizard prompts"
       TG_BOT_TOKEN=""
       TG_USER_ID=""
+      TG_ADMIN_USER_IDS=""
+      TG_ADMIN_USERNAMES=""
     else
       header "Telegram bot"
       info "Open @BotFather, /newbot, paste token below."
       TG_BOT_TOKEN=$(ask_secret "Bot token" "TELEGRAM_BOT_TOKEN")
-      TG_USER_ID=$(ask "Your Telegram user ID (numeric, get from @userinfobot)" "tg_user_id" "")
+
+      # Multi-admin: prefer env vars from Mac wrapper (Step 4b), else single prompt
+      if [[ -n "${TG_ADMIN_USER_IDS:-}" ]]; then
+        TG_USER_ID="${TG_ADMIN_USER_IDS%%,*}"  # legacy single-admin = first admin
+        info "  Admins from Mac wrapper: ${TG_ADMIN_USERNAMES:-<no usernames>} (${TG_ADMIN_USER_IDS})"
+        state_set "tg_admin_user_ids" "$TG_ADMIN_USER_IDS"
+        state_set "tg_admin_usernames" "${TG_ADMIN_USERNAMES:-}"
+      else
+        TG_USER_ID=$(ask "Your Telegram user ID (numeric, get from @userinfobot)" "tg_user_id" "")
+        TG_ADMIN_USER_IDS="$TG_USER_ID"
+        TG_ADMIN_USERNAMES=""
+        state_set "tg_admin_user_ids" "$TG_ADMIN_USER_IDS"
+        state_set "tg_admin_usernames" ""
+      fi
     fi
 
     header "Git remote (optional)"
@@ -1011,6 +1039,9 @@ else
   printf "  Project:     %s\n" "$PROJECT_NAME"
   if [[ -n "${TG_BOT_TOKEN:-}" ]]; then
     printf "  Telegram:    user %s, bot token %s...%s\n" "$TG_USER_ID" "${TG_BOT_TOKEN:0:6}" "${TG_BOT_TOKEN: -4}"
+    if [[ -n "${TG_ADMIN_USER_IDS:-}" && "${TG_ADMIN_USER_IDS}" != "${TG_USER_ID}" ]]; then
+      printf "  Admins:      %s (%s)\n" "${TG_ADMIN_USERNAMES:-<no names>}" "${TG_ADMIN_USER_IDS}"
+    fi
   else
     printf "  Telegram:    %s\n" "<skip>"
   fi
@@ -1031,7 +1062,7 @@ else
 fi
 
 # Export wizard outputs for downstream steps
-export PROJECT_NAME TIMEZONE TG_BOT_TOKEN TG_USER_ID GIT_REMOTE WHISPER_MODEL
+export PROJECT_NAME TIMEZONE TG_BOT_TOKEN TG_USER_ID TG_ADMIN_USER_IDS TG_ADMIN_USERNAMES GIT_REMOTE WHISPER_MODEL
 mark_step_completed 2
 
 ###############################################################################
@@ -1310,6 +1341,11 @@ umask 077
   echo
   echo "# --- Telegram ---"
   echo "TELEGRAM_BOT_TOKEN=${TG_BOT_TOKEN:-}"
+  # Multi-admin allowlist — comma-separated user IDs (auto-detected via /start polling
+  # in the Mac wizard, Step 4b). The telegram plugin seeds these as 'allowed' in its
+  # SQLite users table on startup. TELEGRAM_USER_ID is kept for legacy compat (= first ID).
+  echo "TELEGRAM_ADMIN_USER_IDS=${TG_ADMIN_USER_IDS:-}"
+  echo "TELEGRAM_ADMIN_USERNAMES=${TG_ADMIN_USERNAMES:-}"
   echo "TELEGRAM_USER_ID=${TG_USER_ID:-}"
   echo
   echo "# --- AgentOS state paths ---"

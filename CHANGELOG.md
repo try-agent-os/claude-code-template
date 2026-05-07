@@ -6,6 +6,14 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Added (T06-amend6: multi-admin end-to-end)
+- `install.sh` Linux-side wizard (Step 2) now consumes `TG_ADMIN_USER_IDS` / `TG_ADMIN_USERNAMES` env vars from the Mac wrapper (Step 4b). Falls back to a single `TG_USER_ID` prompt when no env is provided, and back-fills `TG_ADMIN_USER_IDS` from it for consistency.
+- `/etc/agent-os/agent-os.env` (Step 11) now writes `TELEGRAM_ADMIN_USER_IDS`, `TELEGRAM_ADMIN_USERNAMES`, and the legacy `TELEGRAM_USER_ID` (= first admin).
+- `plugins/telegram` adds `seedAdmins()` in `db.ts`, called from `index.ts` at startup. Reads `TELEGRAM_ADMIN_USER_IDS` (preferred) or `TELEGRAM_USER_ID` (legacy fallback) and upserts each ID with `status='allowed'` so wizard-detected admins skip the manual `/approve` step.
+- `plugins/telegram/.claude-plugin/plugin.json` `userConfig` schema swapped `user_id` → `admin_user_ids` + `admin_usernames` (string, comma-separated). `mcp.json` env mapping updated to match.
+- `.env.example` documents the new vars and the legacy compat semantics.
+- Single-admin deployments keep working unchanged; multi-admin is now wired end-to-end (Mac wizard → install.sh → env file → bot allowlist).
+
 ### Added (T06-amend5: Mac UX polish)
 - Cost transparency screen at start of Mac wizard (VPS pricing per provider, Telegram/Claude/Whisper costs).
 - Pre-flight checks: ssh/rsync/git/curl/jq presence, internet, claude CLI, ~/.ssh/config writability, SSH key auto-generation.
