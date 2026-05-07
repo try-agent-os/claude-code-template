@@ -1,0 +1,37 @@
+[Unit]
+Description=AgentOS operator (Claude Code in tmux, channel-pushed)
+Documentation=https://github.com/try-agent-os/claude-code-template
+After=network-online.target agent-os-claude-peers.service agent-os-telegram.service
+Wants=network-online.target agent-os-claude-peers.service agent-os-telegram.service
+
+[Service]
+Type=forking
+User={AGENT_USER}
+Group={AGENT_USER}
+WorkingDirectory={INSTALL_ROOT}/claude/agents/operator
+EnvironmentFile={ENV_FILE}
+Environment=HOME={AGENT_HOME}
+Environment=TERM=screen-256color
+ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
+  'claude --dangerously-skip-permissions \
+    --add-dir {INSTALL_ROOT}/claude/memory \
+    --add-dir {INSTALL_ROOT}/claude/agents \
+    --dangerously-load-development-channels server:claude-peers \
+    --dangerously-load-development-channels server:telegram'
+ExecStop=/usr/bin/tmux kill-session -t operator
+Restart=on-failure
+RestartSec=30
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {AGENT_HOME}/.claude {AGENT_HOME}/.config
+
+# Logging
+StandardOutput=append:{LOG_DIR}/operator.log
+StandardError=append:{LOG_DIR}/operator-errors.log
+
+[Install]
+WantedBy=multi-user.target

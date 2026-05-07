@@ -1,0 +1,29 @@
+[Unit]
+Description=AgentOS heartbeat dispatcher (one-shot, fired by .timer)
+Documentation=https://github.com/try-agent-os/claude-code-template
+After=network-online.target agent-os-claude-peers.service agent-os-saga.service
+Wants=network-online.target
+Requires=agent-os-claude-peers.service agent-os-saga.service
+
+[Service]
+Type=oneshot
+User={AGENT_USER}
+Group={AGENT_USER}
+WorkingDirectory={INSTALL_ROOT}/claude/agents/heartbeat
+EnvironmentFile={ENV_FILE}
+Environment=HOME={AGENT_HOME}
+Environment=MCP_CONNECTION_NONBLOCKING=true
+ExecStart=/bin/bash {INSTALL_ROOT}/claude/agents/heartbeat/dispatcher.sh
+TimeoutStartSec=20min
+Nice=10
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {AGENT_HOME}/.claude {AGENT_HOME}/.config
+
+# Logging
+StandardOutput=append:{LOG_DIR}/dispatcher.log
+StandardError=append:{LOG_DIR}/dispatcher-errors.log

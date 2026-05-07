@@ -1,0 +1,32 @@
+[Unit]
+Description=AgentOS saga-mcp (project + task tracker)
+Documentation=https://github.com/try-agent-os/claude-code-template
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={AGENT_USER}
+Group={AGENT_USER}
+WorkingDirectory={INSTALL_ROOT}/saga-mcp
+EnvironmentFile={ENV_FILE}
+Environment=NODE_ENV=production
+Environment=PORT=3851
+Environment=DB_PATH={STATE_DIR}/saga.db
+ExecStart=/usr/bin/node {INSTALL_ROOT}/saga-mcp/dist/index.js
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths={STATE_DIR} {LOG_DIR}
+
+# Logging
+StandardOutput=append:{LOG_DIR}/saga-mcp.log
+StandardError=append:{LOG_DIR}/saga-mcp-errors.log
+
+[Install]
+WantedBy=multi-user.target
