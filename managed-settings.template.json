@@ -27,14 +27,36 @@
   ],
 
   "permissions": {
-    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "mcp__saga-mcp__*",
+      "mcp__claude-peers__*",
+      "mcp__telegram__*",
+      "Bash(systemctl status*)",
+      "Bash(systemctl is-active*)",
+      "Bash(journalctl*)",
+      "Bash(curl localhost:*)",
+      "Bash(curl 127.0.0.1:*)",
+      "Bash(curl http://localhost:*)",
+      "Bash(curl http://127.0.0.1:*)",
+      "Bash(jq:*)",
+      "Bash(git:*)",
+      "Bash(tmux:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(date:*)"
+    ],
     "deny": [
       "Bash(rm -rf /:*)",
       "Bash(rm -rf /*)",
-      "Bash(sudo:*)",
-      "Bash(mkfs:*)",
+      "Bash(mkfs*)",
       "Bash(dd if=*)",
-      "Bash(:(){ :|:& };:)"
+      "Bash(:(){ :|:& };:)",
+      "Bash(sudo rm*)",
+      "Bash(sudo dd*)",
+      "Bash(sudo mkfs*)"
     ]
   },
 

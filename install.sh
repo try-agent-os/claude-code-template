@@ -19,6 +19,8 @@
 #                                   GitHub, apt repos). Off by default — heavy.
 #   --skip-build                    Skip MCP build steps (assume artefacts exist; for re-runs)
 #   --resume                        Re-entry from a half-completed install (idempotent anyway)
+#   --reset                         Clear /etc/agent-os/install.state.json and re-prompt for everything
+#   --force-reinstall               Re-run all steps even if marked completed in state file
 #
 # Authentication: get a 1-year OAuth token on your local machine with
 #   `claude setup-token`
@@ -65,6 +67,8 @@ NON_INTERACTIVE=0
 HARDEN=0
 SKIP_BUILD=0
 BOOTSTRAP_REPO=""
+RESET=0
+FORCE_REINSTALL=0
 
 # Where this script lives — used to find systemd templates etc.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,9 +81,21 @@ TEMPLATE_DIR="${SCRIPT_DIR}"
 ###############################################################################
 CURRENT_STEP="init"
 
-log()  { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[install]\033[0m %s\n' "$*" >&2; }
-fail() { printf '\033[1;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
+# Color output
+c_green=$'\033[0;32m'
+c_yellow=$'\033[1;33m'
+c_red=$'\033[0;31m'
+c_blue=$'\033[0;34m'
+c_bold=$'\033[1m'
+c_reset=$'\033[0m'
+
+log()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
+warn()   { printf '%s⚠%s %s\n' "$c_yellow" "$c_reset" "$*" >&2; }
+fail()   { printf '%s✗%s %s\n' "$c_red" "$c_reset" "$*" >&2; exit 1; }
+info()   { printf '%s%s%s\n' "$c_blue" "$*" "$c_reset"; }
+ok()     { printf '%s✓%s %s\n' "$c_green" "$c_reset" "$*"; }
+section() { printf '\n%s═══ %s ═══%s\n' "$c_bold" "$*" "$c_reset"; }
+header()  { printf '\n%s┌─ %s%s\n' "$c_bold" "$*" "$c_reset"; }
 
 on_err() {
   local exit_code=$? line=$1
@@ -91,6 +107,131 @@ on_err() {
 trap 'on_err $LINENO' ERR
 
 step() { CURRENT_STEP="$1"; log "==> $1"; }
+
+###############################################################################
+# State file — non-secret answers persisted between runs
+###############################################################################
+STATE_FILE="/etc/agent-os/install.state.json"
+
+# Read a value from state file (returns "" if absent)
+state_get() {
+  local key="$1"; local default="${2:-}"
+  if [ -f "$STATE_FILE" ]; then
+    jq -r --arg k "$key" --arg d "$default" '(.[$k] // $d) | tostring' "$STATE_FILE" 2>/dev/null || echo "$default"
+  else
+    echo "$default"
+  fi
+}
+
+# Write a value to state file. type: string|number|bool
+state_set() {
+  local key="$1"; local value="$2"; local type="${3:-string}"
+  mkdir -p "$(dirname "$STATE_FILE")"
+  if [ ! -f "$STATE_FILE" ]; then
+    echo '{"version": 1, "first_run_at": "'"$(date -Iseconds)"'", "completed_steps": []}' > "$STATE_FILE"
+  fi
+  local now
+  now="$(date -Iseconds)"
+  if [ "$type" = "number" ] || [ "$type" = "bool" ]; then
+    jq --arg k "$key" --argjson v "$value" --arg now "$now" \
+      '.[$k] = $v | .last_run_at = $now' "$STATE_FILE" > "$STATE_FILE.tmp" \
+      && mv "$STATE_FILE.tmp" "$STATE_FILE"
+  else
+    jq --arg k "$key" --arg v "$value" --arg now "$now" \
+      '.[$k] = $v | .last_run_at = $now' "$STATE_FILE" > "$STATE_FILE.tmp" \
+      && mv "$STATE_FILE.tmp" "$STATE_FILE"
+  fi
+  chmod 0640 "$STATE_FILE" 2>/dev/null || true
+  chown root:agent-os "$STATE_FILE" 2>/dev/null || true
+}
+
+# Prompt with default loaded from state file
+ask() {
+  local prompt="$1"; local key="$2"; local default="${3:-}"
+  local prev answer
+  prev=$(state_get "$key" "$default")
+  if [ -n "$prev" ] && [ "$prev" != "null" ]; then
+    printf "  %s [%s%s%s]: " "$prompt" "$c_blue" "$prev" "$c_reset" >&2
+    read -r answer
+    answer="${answer:-$prev}"
+  else
+    printf "  %s: " "$prompt" >&2
+    read -r answer
+  fi
+  state_set "$key" "$answer"
+  printf '%s' "$answer"
+}
+
+# Silent prompt for secrets — NEVER persisted to state.json
+ask_secret() {
+  local prompt="$1"; local var_in_env="$2"
+  local current_val="" answer
+  if [ -f /etc/agent-os/agent-os.env ]; then
+    current_val=$(grep "^${var_in_env}=" /etc/agent-os/agent-os.env 2>/dev/null | cut -d= -f2- || true)
+  fi
+  if [ -n "$current_val" ]; then
+    printf "  %s [%skept from previous%s, type 'reset' to re-enter]: " "$prompt" "$c_blue" "$c_reset" >&2
+    read -rs answer; echo >&2
+    if [ "$answer" = "reset" ]; then
+      printf "  %s: " "$prompt" >&2
+      read -rs answer; echo >&2
+    elif [ -z "$answer" ]; then
+      answer="$current_val"
+    fi
+  else
+    printf "  %s: " "$prompt" >&2
+    read -rs answer; echo >&2
+  fi
+  printf '%s' "$answer"
+}
+
+# Resume prompt at start of wizard
+prompt_resume() {
+  if [ -f "$STATE_FILE" ]; then
+    local first count
+    first=$(state_get "first_run_at")
+    count=$(jq -r '.completed_steps | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    section "AgentOS Install Wizard"
+    info "Found existing install state from: $first"
+    info "Steps completed: $count"
+    if [ "${RESET:-0}" = "1" ]; then
+      warn "Reset mode — clearing state."
+      rm -f "$STATE_FILE"
+      return
+    fi
+    if [ "${NON_INTERACTIVE:-0}" = "1" ]; then
+      ok "Non-interactive — resuming."
+      return
+    fi
+    printf "Resume from previous state? [%sY%s/n]: " "$c_green" "$c_reset"
+    read -r choice
+    if [[ "${choice,,}" == "n" || "${choice,,}" == "no" ]]; then
+      warn "Starting fresh."
+      mv "$STATE_FILE" "$STATE_FILE.bak.$(date +%s)"
+    else
+      ok "Resuming."
+    fi
+  else
+    section "AgentOS Install Wizard"
+    info "First run — let's configure your AgentOS instance."
+  fi
+}
+
+# Mark step completed
+mark_step_completed() {
+  local s="$1"
+  if [ -f "$STATE_FILE" ]; then
+    jq --argjson s "$s" '.completed_steps |= (. + [$s] | unique)' "$STATE_FILE" > "$STATE_FILE.tmp" \
+      && mv "$STATE_FILE.tmp" "$STATE_FILE"
+  fi
+}
+
+# Check whether step is already done
+step_done() {
+  local s="$1"
+  [ -f "$STATE_FILE" ] || return 1
+  jq -e --argjson s "$s" '.completed_steps | index($s)' "$STATE_FILE" >/dev/null 2>&1
+}
 
 ###############################################################################
 # Arg parsing
@@ -111,6 +252,8 @@ for arg in "$@"; do
     --harden) HARDEN=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
     --resume) ;; # no-op; whole script is idempotent
+    --reset) RESET=1 ;;
+    --force-reinstall) FORCE_REINSTALL=1 ;;
     -h|--help)
       sed -n '/^# Usage:/,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//;$d'
       exit 0 ;;
@@ -144,82 +287,125 @@ case "$ARCH" in
   amd64|arm64) log "OS=${ID} ${VERSION_ID:-?}, arch=${ARCH}" ;;
   *) fail "Unsupported arch: ${ARCH}. AgentOS supports amd64 and arm64." ;;
 esac
+mark_step_completed 1
 
 ###############################################################################
-# Step 2 — wizard
+# Step 2 — wizard (state-file-backed, resumable)
 ###############################################################################
 step "2/18 wizard"
 
-prompt_var() {
-  local var=$1 prompt=$2 default=${3:-} secret=${4:-0}
-  # If already exported, keep it.
-  if [[ -n "${!var:-}" ]]; then
-    log "  using preset \$${var} (length=${#var})"
-    return 0
-  fi
-  if [[ "${NON_INTERACTIVE}" == 1 ]]; then
-    if [[ -n "$default" ]]; then
-      printf -v "$var" '%s' "$default"
-      export "$var"
-    else
-      fail "--non-interactive but \$${var} is empty and has no default"
-    fi
-    return 0
-  fi
-  local val
-  if [[ "$secret" == 1 ]]; then
-    read -rsp "  ${prompt}: " val
-    echo
-  elif [[ -n "$default" ]]; then
-    read -rp "  ${prompt} [${default}]: " val
-    val="${val:-$default}"
-  else
-    read -rp "  ${prompt}: " val
-  fi
-  printf -v "$var" '%s' "$val"
-  export "$var"
-}
+# Ensure state dir exists for state file (root:agent-os comes later, but root for now)
+mkdir -p "$ETC_DIR"
 
-# Re-use existing env file if already configured (idempotent)
+# Re-use existing env file if already configured (sources secrets back into env)
 if [[ -f "$ENV_FILE" ]]; then
-  log "  ${ENV_FILE} exists — sourcing existing config (will not re-prompt)"
+  log "  ${ENV_FILE} exists — sourcing existing secrets"
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
 fi
 
-prompt_var PROJECT_NAME      "Project name (slug)" "agentos"
-prompt_var TIMEZONE          "Timezone (IANA, e.g. Europe/Lisbon)" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')"
-prompt_var TG_BOT_TOKEN      "Telegram bot token (from @BotFather, blank to skip telegram)" ""
-prompt_var TG_USER_ID        "Your Telegram user ID (from @userinfobot)" ""
-prompt_var GIT_REMOTE        "Personal git remote (blank = use template only)" ""
-
-# OAuth detection ladder
-if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  log "  CLAUDE_CODE_OAUTH_TOKEN already in env — using it"
-elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  log "  ANTHROPIC_API_KEY in env — falling back (Console-billed mode, no Claude.ai subscription)"
+if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
+  log "  step 2 already completed — loading from state, skipping prompts"
+  PROJECT_NAME=$(state_get "project_name" "agentos")
+  TIMEZONE=$(state_get "timezone" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")
+  TG_USER_ID=$(state_get "tg_user_id" "")
+  GIT_REMOTE=$(state_get "git_remote" "")
+  WHISPER_MODEL=$(state_get "whisper_model" "$WHISPER_MODEL")
+  # Secrets stay in env (already sourced from $ENV_FILE above)
+  TG_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-${TG_BOT_TOKEN:-}}"
 else
-  cat <<'OAUTH_HELP'
+  prompt_resume
 
-  No CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY found.
-  On your LOCAL machine (Mac/Linux with browser), run:
-      claude setup-token
-  This prints a 1-year sk-ant-oat01-... token. Paste it here.
-  (If you only have a Console API key instead, paste that — installer detects which.)
+  if [[ "$NON_INTERACTIVE" == 1 ]]; then
+    # Non-interactive: read from env vars or state, no prompts
+    PROJECT_NAME="${PROJECT_NAME:-$(state_get project_name agentos)}"
+    TIMEZONE="${TIMEZONE:-$(state_get timezone "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")}"
+    TG_BOT_TOKEN="${TG_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
+    TG_USER_ID="${TG_USER_ID:-$(state_get tg_user_id "")}"
+    GIT_REMOTE="${GIT_REMOTE:-$(state_get git_remote "")}"
+    WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model medium)}"
+    # Persist non-secret answers to state
+    state_set project_name "$PROJECT_NAME"
+    state_set timezone "$TIMEZONE"
+    state_set tg_user_id "$TG_USER_ID"
+    state_set git_remote "$GIT_REMOTE"
+    state_set whisper_model "$WHISPER_MODEL"
+  else
+    header "Project identity"
+    PROJECT_NAME=$(ask "Project slug (alphanumeric+dash)" "project_name" "agentos")
 
-OAUTH_HELP
-  prompt_var CLAUDE_CODE_OAUTH_TOKEN "OAuth token (sk-ant-oat01-...) or API key (sk-ant-api03-...)" "" 1
-  if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-    fail "Authentication required. Re-run after obtaining a token."
+    header "Telegram bot"
+    info "Open @BotFather, /newbot, paste token below."
+    TG_BOT_TOKEN=$(ask_secret "Bot token" "TELEGRAM_BOT_TOKEN")
+    TG_USER_ID=$(ask "Your Telegram user ID (numeric, get from @userinfobot)" "tg_user_id" "")
+
+    header "Git remote (optional)"
+    info "Skip with empty value if you'll set up later."
+    GIT_REMOTE=$(ask "git@github.com:user/repo.git" "git_remote" "")
+
+    header "Timezone"
+    TIMEZONE=$(ask "Timezone (IANA, e.g. Europe/Lisbon)" "timezone" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'Europe/Lisbon')")
+    if ! timedatectl list-timezones 2>/dev/null | grep -qF "$TIMEZONE"; then
+      warn "Timezone '$TIMEZONE' not in system list. Continuing anyway."
+    fi
+
+    header "Whisper model"
+    info "tiny=75MB (fast, low quality), base=150MB (balanced), medium=1.5GB (default, full quality)"
+    WHISPER_MODEL=$(ask "Whisper model size" "whisper_model" "medium")
+
+    header "Claude Code OAuth"
+    if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+      info "CLAUDE_CODE_OAUTH_TOKEN already in env — using it."
+    elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+      info "ANTHROPIC_API_KEY in env — falling back (Console-billed mode)."
+    else
+      info "On your local Mac, run: claude setup-token"
+      info "Paste the resulting 1-year token (sk-ant-oat01-...) below."
+      CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "OAuth token" "CLAUDE_CODE_OAUTH_TOKEN")
+      if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        fail "Authentication required. Re-run after obtaining a token."
+      fi
+      # Sniff token type — if it starts with sk-ant-api, it's actually an API key
+      if [[ "${CLAUDE_CODE_OAUTH_TOKEN}" == sk-ant-api* ]]; then
+        ANTHROPIC_API_KEY="${CLAUDE_CODE_OAUTH_TOKEN}"
+        unset CLAUDE_CODE_OAUTH_TOKEN
+        export ANTHROPIC_API_KEY
+        info "Detected API key (not OAuth) — switching var."
+      fi
+    fi
   fi
-  # Sniff token type — if it starts with sk-ant-api, it's actually an API key
-  if [[ "${CLAUDE_CODE_OAUTH_TOKEN}" == sk-ant-api* ]]; then
-    ANTHROPIC_API_KEY="${CLAUDE_CODE_OAUTH_TOKEN}"
-    unset CLAUDE_CODE_OAUTH_TOKEN
-    export ANTHROPIC_API_KEY
-    log "  detected API key (not OAuth) — switching var"
+
+  # Persist state flags too
+  state_set harden "${HARDEN}" number
+  state_set minimal "${MINIMAL}" number
+
+  # Confirmation summary
+  section "Summary"
+  printf "  Project:     %s\n" "$PROJECT_NAME"
+  if [[ -n "${TG_BOT_TOKEN:-}" ]]; then
+    printf "  Telegram:    user %s, bot token %s...%s\n" "$TG_USER_ID" "${TG_BOT_TOKEN:0:6}" "${TG_BOT_TOKEN: -4}"
+  else
+    printf "  Telegram:    %s\n" "<skip>"
+  fi
+  printf "  Git remote:  %s\n" "${GIT_REMOTE:-<skip>}"
+  printf "  Timezone:    %s\n" "$TIMEZONE"
+  printf "  Whisper:     %s\n" "$WHISPER_MODEL"
+  printf "  Harden mode: %s\n" "$([ "${HARDEN:-0}" = "1" ] && echo "yes" || echo "no")"
+  printf "  Minimal:     %s\n" "$([ "${MINIMAL:-0}" = "1" ] && echo "yes (no telegram/operator)" || echo "no")"
+
+  if [ -t 0 ] && [[ "$NON_INTERACTIVE" != 1 ]]; then
+    printf "\nProceed with install? [%sY%s/n]: " "$c_green" "$c_reset"
+    read -r ok_choice
+    if [[ "${ok_choice,,}" == "n" || "${ok_choice,,}" == "no" ]]; then
+      warn "Aborted by user."
+      exit 0
+    fi
   fi
 fi
+
+# Export wizard outputs for downstream steps
+export PROJECT_NAME TIMEZONE TG_BOT_TOKEN TG_USER_ID GIT_REMOTE WHISPER_MODEL
+mark_step_completed 2
 
 ###############################################################################
 # Step 3 — APT prereqs (incl. bubblewrap + socat for sandbox)
@@ -242,6 +428,7 @@ if ! command -v yt-dlp >/dev/null 2>&1; then
     || apt-get install -y yt-dlp \
     || fail "Could not install yt-dlp via pip or apt."
 fi
+mark_step_completed 3
 
 ###############################################################################
 # Step 4 — Node 20 LTS via NodeSource
@@ -262,6 +449,7 @@ if [[ "$need_node" == 1 ]]; then
   apt-get install -y nodejs
   rm -f /tmp/nodesource_setup.sh
 fi
+mark_step_completed 4
 
 ###############################################################################
 # Step 5 — Claude Code from signed apt repo (NOT npm, NOT curl install.sh)
@@ -297,6 +485,7 @@ if ! command -v claude >/dev/null 2>&1; then
   fail "claude-code installed but 'claude' not on PATH — investigate apt postinst."
 fi
 log "  claude --version: $(claude --version 2>&1 | head -1)"
+mark_step_completed 5
 
 ###############################################################################
 # Step 6 — user + dirs
@@ -324,6 +513,13 @@ install -d -o root         -g "$AGENT_USER" -m 0750 "$ETC_DIR" "$CLAUDE_MANAGED_
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CLAUDE_CONFIG_BASE"
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CC_DIR_OPERATOR" "$CC_DIR_DISPATCHER" "$CC_DIR_HEARTBEAT"
 
+# Now that ETC_DIR is owned root:agent-os, fix state file ownership if it pre-existed
+if [ -f "$STATE_FILE" ]; then
+  chown root:"$AGENT_USER" "$STATE_FILE" 2>/dev/null || true
+  chmod 0640 "$STATE_FILE" 2>/dev/null || true
+fi
+mark_step_completed 6
+
 ###############################################################################
 # Step 7 — bun (as agent-os user)
 ###############################################################################
@@ -335,6 +531,7 @@ else
   log "  bun already installed at ${AGENT_HOME}/.bun/bin/bun"
 fi
 BUN_PATH="${AGENT_HOME}/.bun/bin/bun"
+mark_step_completed 7
 
 ###############################################################################
 # Step 8 — clone repos
@@ -366,6 +563,7 @@ if [[ -d "${INSTALL_ROOT}/claude/systemd" ]]; then
   TEMPLATE_DIR="${INSTALL_ROOT}/claude"
   log "  template dir resolved to ${TEMPLATE_DIR}"
 fi
+mark_step_completed 8
 
 ###############################################################################
 # Step 9 — build vendored plugin MCP runtimes + saga-mcp
@@ -413,6 +611,7 @@ fi
 [[ -f dist/index.js ]] || npm run build
 EOF
 fi
+mark_step_completed 9
 
 ###############################################################################
 # Step 10 — render systemd unit templates
@@ -457,6 +656,7 @@ for unit in agent-os-saga.service \
   render_unit "$src" "/etc/systemd/system/${unit}"
   log "  rendered ${unit}"
 done
+mark_step_completed 10
 
 ###############################################################################
 # Step 11 — write /etc/agent-os/agent-os.env
@@ -501,6 +701,7 @@ chown root:"$AGENT_USER" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 umask 022
 log "  wrote ${ENV_FILE}"
+mark_step_completed 11
 
 ###############################################################################
 # Step 12 — render per-agent .claude.json
@@ -529,6 +730,7 @@ render_user_claude_json "$CC_DIR_OPERATOR"
 render_user_claude_json "$CC_DIR_DISPATCHER"
 render_user_claude_json "$CC_DIR_HEARTBEAT"
 log "  per-agent ~/.claude.json (saga-mcp SSE only; claude-peers + telegram via plugin discovery) rendered for operator/dispatcher/heartbeat"
+mark_step_completed 12
 
 ###############################################################################
 # Step 13 — managed-settings.json (org-wide claude-code policy)
@@ -542,6 +744,7 @@ if [[ -f "$MS_TPL" ]]; then
 else
   warn "  managed-settings.template.json missing in ${TEMPLATE_DIR} — skipping"
 fi
+mark_step_completed 13
 
 ###############################################################################
 # Step 14 — install + reload systemd
@@ -549,6 +752,7 @@ fi
 step "14/18 systemd reload"
 
 systemctl daemon-reload
+mark_step_completed 14
 
 ###############################################################################
 # Step 15 — initialize saga DB (first-boot)
@@ -567,6 +771,7 @@ if [[ -x "$INIT_SCRIPT" ]]; then
 else
   log "  init-epics.sh not found — saga-mcp will auto-create DB on first connect"
 fi
+mark_step_completed 15
 
 ###############################################################################
 # Step 16 — optional plugins
@@ -593,6 +798,7 @@ if [[ -n "${WITH_PLUGINS}" ]]; then
 else
   log "  no --with= plugins requested"
 fi
+mark_step_completed 16
 
 ###############################################################################
 # Step 17 — enable + start
@@ -609,6 +815,7 @@ if [[ "${MINIMAL}" == 0 ]]; then
 fi
 
 systemctl enable --now "${UNITS[@]}"
+mark_step_completed 17
 
 ###############################################################################
 # Step 18 — wait + verify
@@ -636,6 +843,7 @@ if curl -fsS --max-time 3 http://127.0.0.1:3851/health >/dev/null 2>&1 \
 else
   warn "  [WARN] saga-mcp not responding — check journalctl -u agent-os-saga"
 fi
+mark_step_completed 18
 
 ###############################################################################
 # Optional: --harden firewall
