@@ -1,24 +1,24 @@
 # Claude Code Template
 
-> Минимальный шаблон AgentOS на Claude Code: оркестратор + диспетчер + один пример скилла.
+> Minimal AgentOS template for Claude Code: orchestrator + dispatcher + one example skill.
 
-## Структура
+## Structure
 
 ```
 .
-├── CLAUDE.md                  # Корневой системный промпт оркестратора
+├── CLAUDE.md                  # Root system prompt for the orchestrator
 ├── agents/
-│   ├── operator/CLAUDE.md     # Долгоживущий агент (Telegram-интерфейс)
-│   └── dispatcher/CLAUDE.md   # Эфемерный cron-агент (запускает воркеров)
+│   ├── operator/CLAUDE.md     # Long-running agent (Telegram interface)
+│   └── dispatcher/CLAUDE.md   # Ephemeral cron agent (spawns workers)
 └── skills/
-    └── morning-brief.md        # Пример переиспользуемого скилла
+    └── morning-brief.md        # Example reusable skill
 ```
 
-## Идея
+## Idea
 
-Operator держит сессию и общается с пользователем. Dispatcher просыпается по cron, читает очередь задач, запускает короткоживущих воркеров, собирает результаты и умирает.
+The operator holds an ongoing session and talks to the user. The dispatcher wakes up on cron, reads the task queue, spawns short-lived workers, collects their results, and exits.
 
-Шаблон намеренно минимальный — добавляй своих под-агентов, скиллы и инфраструктуру под свой домен.
+The template is intentionally minimal — add your own sub-agents, skills, and infrastructure for your domain.
 
 ## License
 

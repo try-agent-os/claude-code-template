@@ -1,49 +1,49 @@
 ---
 name: morning-brief
-description: Утренний брифинг — собирает встречи дня, due-задачи, PR статус, pending replies и горячие темы. Отправляет пользователю в Telegram через operator.
+description: Morning briefing — gathers today's meetings, due tasks, PR status, pending replies, and hot topics. Sends it to the user in Telegram via the operator.
 type: scheduled
-trigger: morning-brief, утренний брифинг, доброе утро, morning
-read_when: morning-brief, ежедневный брифинг
+trigger: morning-brief, morning briefing, good morning, morning
+read_when: morning-brief, daily briefing
 ---
 
-# Скилл: Morning Brief
+# Skill: Morning Brief
 
-Ежедневный утренний брифинг. Собирает контекст дня и отправляет сводку пользователю в Telegram.
+Daily morning briefing. Gathers context for the day and sends a summary to the user in Telegram.
 
-## Когда запускать
+## When to run
 
-- Ежедневно утром по расписанию (`memory/schedule.md`: `morning-brief`, 24ч)
-- Приоритет задачи: medium
-
----
-
-## Алгоритм
-
-### Step 1: Google Calendar — встречи на сегодня
-
-Получить события на сегодня через `mcp__claude_ai_Google_Calendar__list_events` (если Calendar MCP подключен).
-
-Формат для каждого события:
-- `HH:MM — Название`
-- Если `needsAction` — добавить `(не подтверждено!)`
-
-Если событий нет — написать "Свободный день".
+- Daily in the morning on schedule (`memory/schedule.md`: `morning-brief`, 24h)
+- Task priority: medium
 
 ---
 
-### Step 2: Reply Watchdog — ждут ответа пользователя
+## Algorithm
 
-Сканируй `../../memory/contacts/*.md` на признаки pending reply:
+### Step 1: Google Calendar — today's meetings
+
+Fetch today's events via `mcp__claude_ai_Google_Calendar__list_events` (if the Calendar MCP is connected).
+
+Format for each event:
+- `HH:MM — Title`
+- If `needsAction` — append `(not confirmed!)`
+
+If there are no events — write "Free day".
+
+---
+
+### Step 2: Reply Watchdog — waiting on a user reply
+
+Scan `../../memory/contacts/*.md` for signs of a pending reply:
 
 ```bash
 PENDING=()
 for f in ../../memory/contacts/*.md; do
   name=$(grep -m1 "^# " "$f" | sed 's/# //')
-  # Признаки ожидающего ответа:
-  if grep -q "ответил\|предложил встречу\|еще не ответил\|не ответил на предложение\|pending_reply: true\|last_contact_direction: incoming" "$f"; then
-    # Исключить если DONE/closed/архив
-    if ! grep -qi "DONE\|closed\|архив" "$f"; then
-      next=$(grep 'Следующий шаг' "$f" | head -1 | sed 's/.*Следующий шаг[^:]*://;s/^\s*//')
+  # Signs of a waiting reply:
+  if grep -q "replied\|proposed a meeting\|hasn't replied yet\|no reply to proposal\|pending_reply: true\|last_contact_direction: incoming" "$f"; then
+    # Skip if DONE/closed/archived
+    if ! grep -qi "DONE\|closed\|archived" "$f"; then
+      next=$(grep 'Next step' "$f" | head -1 | sed 's/.*Next step[^:]*://;s/^\s*//')
       last=$(grep -o "### 2026-[0-9-]*" "$f" | tail -1)
       PENDING+=("• $name — $next ($last)")
     fi
@@ -51,46 +51,46 @@ for f in ../../memory/contacts/*.md; do
 done
 ```
 
-Если `PENDING` не пустой — добавить блок в итоговое сообщение:
+If `PENDING` is non-empty — add a block to the final message:
 
 ```
-⚡ Ждут ответа:
-• [Имя] — [контекст 1 строка]
+⚡ Waiting on reply:
+• [Name] — [one-line context]
 ```
 
-Если pending нет — блок не добавлять (не спамить).
+If there are no pending — don't add the block (don't spam).
 
 ---
 
-### Step 3: Горячие темы
+### Step 3: Hot topics
 
-Прочитать `../../memory/context.md` (если есть). Извлечь 2-3 самых горячих пункта:
-- Активные сделки (ожидающие подписи/ответа)
-- Критичные дедлайны
-- Urgent задачи
+Read `../../memory/context.md` (if it exists). Extract 2-3 hottest items:
+- Active deals (waiting for signature/reply)
+- Critical deadlines
+- Urgent tasks
 
 ---
 
-### Step 4: Собрать и отправить через operator
+### Step 4: Assemble and send via the operator
 
-Формат сообщения (блоки с пустыми значениями — пропускать):
+Message format (skip blocks with empty values):
 
 ```
-🌅 DD.MM — Доброе утро!
+🌅 DD.MM — Good morning!
 
-📅 Сегодня:
-• HH:MM — Название
-• HH:MM — Название (не подтверждено!)
+📅 Today:
+• HH:MM — Title
+• HH:MM — Title (not confirmed!)
 
-🔥 Горячее:
-• [пункт 1]
-• [пункт 2]
+🔥 Hot:
+• [item 1]
+• [item 2]
 
-⚡ Ждут ответа:
-• [Имя] — [контекст]
+⚡ Waiting on reply:
+• [Name] — [context]
 ```
 
-Отправить через claude-peers (operator перешлет в Telegram):
+Send via claude-peers (the operator will forward to Telegram):
 
 ```bash
 PEERS=$(curl -s http://127.0.0.1:7899/list-peers -H 'Content-Type: application/json' -d '{"scope":"machine","cwd":"/","git_root":null}')
@@ -98,24 +98,24 @@ OPERATOR_ID=$(echo "$PEERS" | python3 -c "import json,sys; peers=json.load(sys.s
 if [ -n "$OPERATOR_ID" ]; then
   curl -s http://127.0.0.1:7899/send-message \
     -H 'Content-Type: application/json' \
-    -d "{\"to_id\": \"$OPERATOR_ID\", \"from_id\": \"morning-brief\", \"text\": \"<СООБЩЕНИЕ>\"}"
+    -d "{\"to_id\": \"$OPERATOR_ID\", \"from_id\": \"morning-brief\", \"text\": \"<MESSAGE>\"}"
 fi
 ```
 
 ---
 
-### Step 5: Обновить check-log
+### Step 5: Update check-log
 
 ```bash
-echo "morning-brief | $(date '+%Y-%m-%d %H:%M') | отправлен" >> ../../memory/check-log.md
+echo "morning-brief | $(date '+%Y-%m-%d %H:%M') | sent" >> ../../memory/check-log.md
 ```
 
 ---
 
-## Ошибки
+## Errors
 
-| Ситуация | Действие |
-|----------|----------|
-| Google Calendar недоступен | Пропустить Step 1, продолжить |
-| Operator не найден в peers | Пропустить отправку, записать в result.md |
-| `memory/contacts/` пуст | Step 2 → блок не добавлять |
+| Situation | Action |
+|-----------|--------|
+| Google Calendar unavailable | Skip Step 1, continue |
+| Operator not found in peers | Skip sending, record in result.md |
+| `memory/contacts/` empty | Step 2 → don't add the block |
