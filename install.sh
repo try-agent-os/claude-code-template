@@ -109,9 +109,6 @@ readonly CC_DIR_OPERATOR="${CLAUDE_CONFIG_BASE}/operator"
 readonly CC_DIR_DISPATCHER="${CLAUDE_CONFIG_BASE}/dispatcher"
 readonly CC_DIR_HEARTBEAT="${CLAUDE_CONFIG_BASE}/heartbeat"
 
-# Anthropic apt repo signing key fingerprint (hard-coded for verification).
-readonly ANTHROPIC_KEY_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
-
 # Repos to clone. Override TEMPLATE_REPO via --bootstrap-personal-repo.
 # claude-peers and telegram are now vendored as plugins inside the template
 # repo (plugins/claude-peers, plugins/telegram). saga-mcp remains a separate
@@ -1331,37 +1328,27 @@ fi
 mark_step_completed 4
 
 ###############################################################################
-# Step 5 — Claude Code from signed apt repo (NOT npm, NOT curl install.sh)
+# Step 5 — Claude Code via official bootstrap
+#
+# NOTE: Anthropic decommissioned the deb apt repo at downloads.claude.ai/claude-code/apt
+# (returned 404s starting ~mid-2026). The canonical install path is now the
+# bootstrap script at https://claude.ai/install.sh, which downloads a signed
+# native binary (SHA-256 verified inside the bootstrap) into ~/.local/bin/claude.
+# We symlink to /usr/local/bin so the agent-os user (created in Step 6) can
+# invoke it without PATH gymnastics in systemd units.
 ###############################################################################
-step "5/18 claude-code (signed apt repo)"
-
-KEYRING="/usr/share/keyrings/anthropic.gpg"
-SOURCES_LIST="/etc/apt/sources.list.d/claude-code.list"
-
-if [[ ! -f "$KEYRING" ]]; then
-  curl -fsSL https://downloads.claude.ai/claude-code/apt/anthropic.asc \
-    | gpg --dearmor -o "$KEYRING"
-
-  # Verify fingerprint
-  actual_fpr=$(gpg --no-default-keyring --keyring "$KEYRING" --list-keys --with-colons \
-    | awk -F: '/^fpr:/ {print $10; exit}')
-  if [[ "$actual_fpr" != "$ANTHROPIC_KEY_FPR" ]]; then
-    rm -f "$KEYRING"
-    fail "Anthropic GPG key fingerprint mismatch: got $actual_fpr, expected $ANTHROPIC_KEY_FPR"
-  fi
-  log "  GPG key fingerprint verified: $actual_fpr"
-fi
-
-if [[ ! -f "$SOURCES_LIST" ]]; then
-  echo "deb [signed-by=${KEYRING}] https://downloads.claude.ai/claude-code/apt stable main" \
-    > "$SOURCES_LIST"
-fi
-
-apt-get update -qq
-apt-get install -y claude-code
+step "5/18 claude-code (official bootstrap)"
 
 if ! command -v claude >/dev/null 2>&1; then
-  fail "claude-code installed but 'claude' not on PATH — investigate apt postinst."
+  curl -fsSL https://claude.ai/install.sh | bash
+fi
+
+if [[ -x "/root/.local/bin/claude" ]] && [[ ! -e "/usr/local/bin/claude" ]]; then
+  ln -sf /root/.local/bin/claude /usr/local/bin/claude
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  fail "claude-code installed but 'claude' not on PATH — expected /root/.local/bin/claude with symlink at /usr/local/bin/claude."
 fi
 log "  claude --version: $(claude --version 2>&1 | head -1)"
 mark_step_completed 5
