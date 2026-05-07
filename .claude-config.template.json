@@ -21,5 +21,14 @@
       "type": "sse",
       "url": "http://localhost:3851/sse"
     }
+  },
+
+  "$comment_growthbook": "tengu_harbor_ledger and tengu_harbor are server-controlled feature flags claude-code uses to gate channel-push via plugins. We seed them locally as a hint — they get overwritten by GrowthBook server fetch on first session, but until then the local values are read by f_(). On Anthropic enterprise plans these flags are auto-set; on personal plans channel-push for plugins is currently gated.",
+  "cachedGrowthBookFeatures": {
+    "tengu_harbor": true,
+    "tengu_harbor_ledger": [
+      {"plugin": "claude-peers", "marketplace": "agentos"},
+      {"plugin": "telegram", "marketplace": "agentos"}
+    ]
   }
 }
