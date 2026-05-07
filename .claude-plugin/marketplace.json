@@ -67,10 +67,10 @@
     },
     {
       "name": "agentos-core",
-      "version": "0.0.0-placeholder",
+      "version": "0.1.0",
       "category": "agentos-core",
       "path": "./plugins/agentos-core/",
-      "description": "PLACEHOLDER. Meta-plugin exposing /agentos-status, /agentos-restart, /agentos-verify slash commands. To be implemented in a later task.",
+      "description": "Slash commands for managing AgentOS instance: /agentos:status, /agentos:restart, /agentos:verify, /agentos:logs, /agentos:peers, /agentos:heartbeat.",
       "source": "internal"
     }
   ]
