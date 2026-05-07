@@ -388,9 +388,40 @@ prompt_existing_alias() {
   fi
 }
 
+ensure_brew_cli() {
+  # args: cli_name brew_pkg human_label
+  local cli="$1" pkg="$2" label="${3:-$1}"
+  if command -v "$cli" >/dev/null 2>&1; then
+    return 0
+  fi
+  warn "$label not installed."
+  if command -v brew >/dev/null 2>&1; then
+    printf "  Install via brew? [%sY%s/n]: " "$c_green" "$c_reset"
+    local b
+    read -r b
+    if [[ "${b,,}" != "n" ]]; then
+      brew install "$pkg" || fail "brew install $pkg failed"
+      return 0
+    else
+      info "Install manually: brew install $pkg"
+      return 1
+    fi
+  else
+    info "Install Homebrew first: https://brew.sh — then 'brew install $pkg'"
+    return 1
+  fi
+}
+
 provision_do_droplet() {
   header "Provision DigitalOcean droplet"
-  require_cli doctl doctl
+  ensure_brew_cli doctl doctl "doctl" || return 1
+  if ! doctl auth list 2>/dev/null | grep -q .; then
+    info "Authenticate doctl: doctl auth init"
+    info "Get token: https://cloud.digitalocean.com/account/api/tokens"
+    printf "  Press ENTER after running 'doctl auth init': "
+    read -r _
+  fi
+  ok "doctl ready"
   local region size name ssh_key_id ip
   printf "  Droplet name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Region [%sfra1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fra1}"
@@ -419,7 +450,14 @@ provision_do_droplet() {
 
 provision_hetzner() {
   header "Provision Hetzner Cloud server"
-  require_cli hcloud hcloud
+  ensure_brew_cli hcloud hcloud "hcloud" || return 1
+  if ! hcloud context list 2>/dev/null | grep -q .; then
+    info "Create a Hetzner API token: https://console.hetzner.cloud → Project → Security → API Tokens"
+    info "Then run: hcloud context create agentos"
+    printf "  Press ENTER after creating context: "
+    read -r _
+  fi
+  ok "hcloud ready"
   local region size name ssh_key_name ip
   printf "  Server name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Location [%sfsn1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fsn1}"
@@ -450,7 +488,14 @@ provision_hetzner() {
 
 provision_linode() {
   header "Provision Linode"
-  require_cli linode-cli linode-cli
+  ensure_brew_cli linode-cli linode-cli "linode-cli" || return 1
+  if ! linode-cli account view >/dev/null 2>&1; then
+    info "Configure linode-cli: linode-cli configure"
+    info "Get token: https://cloud.linode.com/profile/tokens"
+    printf "  Press ENTER after running 'linode-cli configure': "
+    read -r _
+  fi
+  ok "linode-cli ready"
   local region size name pubkey ip
   printf "  Linode label [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Region [%seu-central%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-eu-central}"
@@ -484,8 +529,92 @@ exec_remote_setup_wizard() {
   fi
   deploy_state_init
 
+  # Per-deploy log file
+  mkdir -p "$DEPLOY_STATE_DIR"
+  local DEPLOY_LOG="$DEPLOY_STATE_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+
+  ###########################################################################
+  # Cost transparency screen
+  ###########################################################################
   section "AgentOS Remote Setup"
-  info "Running on macOS — will provision (or attach to) a VPS and install AgentOS remotely."
+  info "Will provision a Linux VPS and install AgentOS template on it."
+  info ""
+  info "Cost overview:"
+  info "  • VPS (recurring):       \$5–\$48/month (depending on provider + size)"
+  info "    DigitalOcean s-4vcpu-8gb: \$48/mo (recommended)"
+  info "    Hetzner CAX21:           ~\$8/mo (good budget option)"
+  info "    Linode g6-standard-2:    \$24/mo"
+  info "  • Telegram:              free"
+  info "  • Claude Code:           free CLI; runtime requires Anthropic subscription/API"
+  info "  • Whisper transcription: free (local, ~1.5 GB disk)"
+  info ""
+  printf "  Continue? [%sY%s/n]: " "$c_green" "$c_reset"
+  local cont
+  read -r cont
+  [[ "${cont,,}" != "n" ]] || exit 0
+
+  ###########################################################################
+  # Pre-flight checks
+  ###########################################################################
+  header "Pre-flight checks"
+
+  # Mac dependencies
+  local missing=()
+  for cmd in ssh rsync git curl jq; do
+    if ! command -v "$cmd" &>/dev/null; then
+      missing+=("$cmd")
+    fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    fail "Missing on this Mac: ${missing[*]} — install with: brew install ${missing[*]}"
+  fi
+  ok "ssh / rsync / git / curl / jq present"
+
+  # Internet
+  if ! curl -fsS --max-time 5 https://api.anthropic.com/v1/models &>/dev/null; then
+    warn "Cannot reach api.anthropic.com — Claude Code won't auth on remote either."
+  else
+    ok "Internet connectivity"
+  fi
+
+  # claude CLI on Mac (needed for setup-token)
+  if ! command -v claude &>/dev/null; then
+    warn "Claude Code CLI not found on this Mac. You'll need it for 'claude setup-token'."
+    info "Install: curl -fsSL https://claude.ai/install.sh | bash"
+    printf "  Continue anyway? [y/%sN%s]: " "$c_yellow" "$c_reset"
+    local ok_choice
+    read -r ok_choice
+    [[ "${ok_choice,,}" == "y" ]] || exit 1
+  else
+    ok "Claude Code: $(claude --version 2>&1 | head -1)"
+  fi
+
+  # ~/.ssh/config writable
+  if [[ ! -d ~/.ssh ]]; then
+    log "Creating ~/.ssh directory..."
+    mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  fi
+  touch ~/.ssh/config 2>/dev/null || { fail "Cannot write to ~/.ssh/config"; }
+  chmod 600 ~/.ssh/config
+  ok "~/.ssh/config writable"
+
+  # SSH key
+  if [[ ! -f ~/.ssh/id_ed25519 ]] && [[ ! -f ~/.ssh/id_rsa ]]; then
+    warn "No SSH key found at ~/.ssh/id_ed25519 or ~/.ssh/id_rsa"
+    printf "  Generate ed25519 key now? [%sY%s/n]: " "$c_green" "$c_reset"
+    local gen_choice
+    read -r gen_choice
+    if [[ "${gen_choice,,}" != "n" ]]; then
+      ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "agentos-deploy"
+      ok "Generated ~/.ssh/id_ed25519"
+      info "Add this to your provider account (DO/Hetzner/Linode):"
+      cat ~/.ssh/id_ed25519.pub
+      printf "  Press ENTER when added: "
+      read -r _
+    fi
+  else
+    ok "SSH key present"
+  fi
 
   # Show previous hosts (resume hint)
   local prev_aliases
@@ -495,13 +624,16 @@ exec_remote_setup_wizard() {
     echo "$prev_aliases" | sed 's/^/  - /'
   fi
 
-  # ─── Step 1: Pick host
+  ###########################################################################
+  # Step 1 — Target host
+  ###########################################################################
   header "Step 1 of 6: Target host"
   echo "  1) Use existing SSH alias from ~/.ssh/config"
   echo "  2) Provision new DigitalOcean droplet (doctl)"
   echo "  3) Provision new Hetzner Cloud server (hcloud)"
   echo "  4) Provision new Linode (linode-cli)"
   printf "Choose [%sdefault: 1%s]: " "$c_blue" "$c_reset"
+  local choice
   read -r choice
   choice="${choice:-1}"
 
@@ -517,64 +649,222 @@ exec_remote_setup_wizard() {
     fail "SSH_ALIAS not set after host selection."
   fi
 
-  # ─── Step 2: Verify SSH
+  ###########################################################################
+  # Step 2 — SSH connectivity
+  ###########################################################################
   header "Step 2 of 6: SSH connectivity to '$SSH_ALIAS'"
   if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$SSH_ALIAS" true 2>/dev/null; then
     fail "SSH to $SSH_ALIAS failed. Check ~/.ssh/config and key access."
   fi
   ok "SSH to $SSH_ALIAS works."
 
-  # ─── Step 3: Collect inputs
+  ###########################################################################
+  # Step 3 — Configuration
+  ###########################################################################
   header "Step 3 of 6: Configuration"
   PROJECT_NAME=$(ask "Project slug" "project_name" "myagentos")
-  TG_USER_ID=$(ask "Your Telegram user ID (numeric)" "tg_user_id" "")
   GIT_REMOTE=$(ask "Git remote (optional, blank to skip)" "git_remote" "")
   TIMEZONE=$(ask "Timezone (IANA)" "timezone" "Europe/Lisbon")
   WHISPER_MODEL=$(ask "Whisper model (tiny|base|medium)" "whisper_model" "medium")
-  TG_BOT_TOKEN=$(ask_secret "Telegram bot token" "TELEGRAM_BOT_TOKEN_TMP")
-  CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "Claude OAuth token (run 'claude setup-token' on this Mac if needed)" "CLAUDE_OAUTH_TMP")
 
-  # ─── Step 4: Push template to remote
-  header "Step 4 of 6: Push template to $SSH_ALIAS"
-  local REMOTE_DIR=/tmp/agent-os-bootstrap
-  local LOCAL_REPO_ROOT
-  LOCAL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  ssh "$SSH_ALIAS" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
-  rsync -az \
-    --exclude='.git' \
-    --exclude='node_modules' \
-    --exclude='.worktrees' \
-    --exclude='dist' \
-    "$LOCAL_REPO_ROOT/" "$SSH_ALIAS:$REMOTE_DIR/"
-  ok "Template synced to $SSH_ALIAS:$REMOTE_DIR"
+  ###########################################################################
+  # Step 4 — Telegram bot setup (BotFather hand-holding)
+  ###########################################################################
+  header "Step 4 of 6: Telegram bot setup"
+  cat <<'EOF'
+  ┌─────────────────────────────────────────────┐
+  │ Create your Telegram bot via @BotFather:    │
+  │                                              │
+  │ 1. Open Telegram → search @BotFather        │
+  │ 2. Send /newbot                             │
+  │ 3. Pick a display name (e.g., "Vasily AI")  │
+  │ 4. Pick a username — must end in _bot       │
+  │ 5. Copy the API token (format: 123:ABC...)  │
+  │ 6. Paste below                              │
+  └─────────────────────────────────────────────┘
+EOF
 
-  # ─── Step 5: Run install.sh on remote (non-interactive)
-  header "Step 5 of 6: Remote install"
-  info "  This typically takes ~5–8 minutes (apt + node + claude-code + plugins + whisper model)."
-  ssh "$SSH_ALIAS" "cd $REMOTE_DIR && \
-    PROJECT_NAME='$PROJECT_NAME' \
-    TG_USER_ID='$TG_USER_ID' \
-    GIT_REMOTE='$GIT_REMOTE' \
-    TIMEZONE='$TIMEZONE' \
-    WHISPER_MODEL='$WHISPER_MODEL' \
-    TELEGRAM_BOT_TOKEN='$TG_BOT_TOKEN' \
-    CLAUDE_CODE_OAUTH_TOKEN='$CLAUDE_CODE_OAUTH_TOKEN' \
-    sudo -E bash install.sh --non-interactive"
+  while true; do
+    TG_BOT_TOKEN=$(ask_secret "Bot token" "TG_BOT_TOKEN")
+    if [[ "$TG_BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+      ok "Token format valid"
+      break
+    fi
+    warn "Invalid format. Expected: 123456789:ABC...DEF (try again or Ctrl+C to abort)"
+  done
 
-  # ─── Step 6: Verify
-  header "Step 6 of 6: Verify"
-  if ssh "$SSH_ALIAS" "test -x /opt/agent-os/claude/scripts/verify.sh"; then
-    ssh "$SSH_ALIAS" "sudo bash /opt/agent-os/claude/scripts/verify.sh" || warn "verify.sh reported issues."
+  ###########################################################################
+  # Step 4b — Multi-admin via /start polling
+  ###########################################################################
+  header "Step 4b: Bot admins (via /start)"
+  info "Now have your admins send /start to your bot. We'll auto-detect their user IDs."
+  info ""
+  info "  • On Telegram, find your bot (the username you picked)"
+  info "  • Send /start (or any message)"
+  info "  • Add other admins now too — they should also send /start"
+  info ""
+
+  local TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
+  local TG_ADMIN_USER_IDS="" TG_ADMIN_USERNAMES="" admins=""
+
+  while true; do
+    printf "  Press ENTER when all admins have sent /start: "
+    read -r _
+
+    local raw
+    raw=$(curl -fsS --max-time 10 "${TG_API}/getUpdates" 2>/dev/null || echo '{"result":[]}')
+    admins=$(echo "$raw" | jq -r '.result[]?.message | select(.text=="/start") | "\(.from.id):\(.from.username // .from.first_name)"' 2>/dev/null | sort -u)
+
+    if [[ -z "$admins" ]]; then
+      warn "No /start messages found. Did you send to the right bot?"
+      info "Bot token starts: ${TG_BOT_TOKEN:0:10}..."
+      printf "  Retry / skip / abort? [%sR%s/s/a]: " "$c_green" "$c_reset"
+      local choice2
+      read -r choice2
+      case "${choice2,,}" in
+        s) TG_ADMIN_USER_IDS=""; TG_ADMIN_USERNAMES=""; break ;;
+        a) exit 0 ;;
+        *) continue ;;
+      esac
+    else
+      ok "Found admins:"
+      echo "$admins" | while IFS=: read -r id user; do
+        printf "    %s✓%s @%s (id %s)\n" "$c_green" "$c_reset" "$user" "$id"
+      done
+      TG_ADMIN_USER_IDS=$(echo "$admins" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
+      TG_ADMIN_USERNAMES=$(echo "$admins" | cut -d: -f2 | tr '\n' ',' | sed 's/,$//')
+      printf "  Save these as bot admins? [%sY%s/n]: " "$c_green" "$c_reset"
+      local ok_choice
+      read -r ok_choice
+      [[ "${ok_choice,,}" != "n" ]] || exit 0
+      break
+    fi
+  done
+
+  # legacy TG_USER_ID = first admin (for backward compat with hooks/.env writes)
+  TG_USER_ID="${TG_ADMIN_USER_IDS%%,*}"
+  state_set "tg_admin_user_ids" "$TG_ADMIN_USER_IDS"
+  state_set "tg_admin_usernames" "$TG_ADMIN_USERNAMES"
+  state_set "tg_user_id" "$TG_USER_ID"
+
+  ###########################################################################
+  # Step 4c — Claude Code OAuth (auto-launch setup-token)
+  ###########################################################################
+  header "Step 4c: Claude Code OAuth"
+
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    ok "OAuth token from env (length ${#CLAUDE_CODE_OAUTH_TOKEN})"
+  elif command -v claude &>/dev/null; then
+    info "Need a 1-year OAuth token. We'll run 'claude setup-token' for you."
+    info "(Browser will open. Paste resulting token below.)"
+    printf "  Press ENTER to launch claude setup-token: "
+    read -r _
+
+    # Open in new Terminal window so user sees the URL even if main shell is busy
+    if command -v osascript &>/dev/null; then
+      osascript -e 'tell application "Terminal" to do script "claude setup-token"' 2>/dev/null \
+        || claude setup-token
+    else
+      claude setup-token
+    fi
+
+    echo
+    CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "Paste OAuth token (sk-ant-oat01-...)" "CLAUDE_CODE_OAUTH_TOKEN")
   else
-    info "  scripts/verify.sh not present in repo — using systemctl probe."
-    ssh "$SSH_ALIAS" "sudo systemctl is-active agent-os-saga.service agent-os-dispatcher.timer 2>&1 | head -5" \
-      || warn "Some units inactive. Inspect: ssh $SSH_ALIAS 'sudo systemctl status agent-os-*'"
+    info "Get token: on a Mac with Claude Code installed, run 'claude setup-token'"
+    CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "Paste OAuth token (sk-ant-oat01-...)" "CLAUDE_CODE_OAUTH_TOKEN")
   fi
 
-  section "Done"
-  printf "AgentOS deployed to %s%s%s.\n" "$c_green" "$SSH_ALIAS" "$c_reset"
-  printf "Attach to operator: %sssh %s -t 'sudo -u agent-os tmux attach -t operator'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
-  printf "Re-run anytime: %sbash install.sh%s (state at %s)\n" "$c_bold" "$c_reset" "$DEPLOY_STATE"
+  # Validate format
+  if ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-oat[0-9]+-[A-Za-z0-9_-]+$ ]]; then
+    warn "Token format unexpected (expected sk-ant-oat01-...). Continuing anyway."
+  fi
+
+  ###########################################################################
+  # Step 5 — Remote install (git clone, not rsync)
+  ###########################################################################
+  header "Step 5 of 6: Remote install"
+  info "Cloning template on $SSH_ALIAS..."
+
+  ssh "$SSH_ALIAS" "rm -rf /tmp/agentos && git clone --depth 1 https://github.com/try-agent-os/claude-code-template /tmp/agentos" 2>&1 | tee -a "$DEPLOY_LOG"
+  ok "Repo cloned remotely"
+
+  info "Running install.sh non-interactively (this will take 5-15 min)..."
+  info "Live output below — also tee'd to $DEPLOY_STATE_DIR/$SSH_ALIAS.log"
+
+  # Pass all wizard answers as env vars; install.sh resumes from state.json on remote
+  ssh "$SSH_ALIAS" "cd /tmp/agentos && \
+      PROJECT_NAME='$PROJECT_NAME' \
+      GIT_REMOTE='$GIT_REMOTE' \
+      TIMEZONE='$TIMEZONE' \
+      WHISPER_MODEL='$WHISPER_MODEL' \
+      TELEGRAM_BOT_TOKEN='$TG_BOT_TOKEN' \
+      TG_USER_ID='$TG_USER_ID' \
+      TG_ADMIN_USER_IDS='$TG_ADMIN_USER_IDS' \
+      TG_ADMIN_USERNAMES='$TG_ADMIN_USERNAMES' \
+      CLAUDE_CODE_OAUTH_TOKEN='$CLAUDE_CODE_OAUTH_TOKEN' \
+      sudo -E bash install.sh --non-interactive" 2>&1 | tee "$DEPLOY_STATE_DIR/$SSH_ALIAS.log"
+  local install_exit=${PIPESTATUS[0]}
+
+  if [[ $install_exit -ne 0 ]]; then
+    fail "Remote install exited $install_exit — check log: $DEPLOY_STATE_DIR/$SSH_ALIAS.log (resume: bash install.sh)"
+  fi
+  ok "Remote install completed"
+
+  ###########################################################################
+  # Step 6 — Self-test via Telegram + operator peer registration
+  ###########################################################################
+  header "Step 6 of 6: Self-test"
+  info "Sending test message to your bot..."
+
+  local first_admin="${TG_ADMIN_USER_IDS%%,*}"
+  if [[ -n "$first_admin" ]]; then
+    if curl -fsS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=$first_admin" \
+        -d "text=AgentOS deployed to $SSH_ALIAS ($(date +%H:%M)). If you see this, the bot works." \
+        >/dev/null 2>&1; then
+      ok "Test message sent — check your Telegram"
+    else
+      warn "Test message failed (operator may still come up)"
+    fi
+  fi
+
+  # Wait up to 60s for operator to register as peer
+  info "Waiting up to 60s for operator to register..."
+  local i
+  for i in $(seq 1 30); do
+    if ssh "$SSH_ALIAS" "curl -sf http://127.0.0.1:7899/list-peers -H 'Content-Type: application/json' -d '{\"scope\":\"machine\",\"cwd\":\"/\",\"git_root\":null}' 2>/dev/null | jq -e '.[] | select(.cwd | contains(\"operator\"))' >/dev/null" 2>/dev/null; then
+      ok "Operator registered as peer (took ${i}s × 2)"
+      break
+    fi
+    sleep 2
+    printf "."
+  done
+  echo
+
+  # Optional verify.sh probe (existed in old wizard — keep for parity)
+  if ssh "$SSH_ALIAS" "test -x /opt/agent-os/claude/scripts/verify.sh" 2>/dev/null; then
+    info "Running verify.sh on remote..."
+    ssh "$SSH_ALIAS" "sudo bash /opt/agent-os/claude/scripts/verify.sh" 2>&1 | tail -20 \
+      || warn "verify.sh reported issues — full output: ssh $SSH_ALIAS 'sudo bash /opt/agent-os/claude/scripts/verify.sh'"
+  fi
+
+  ###########################################################################
+  # Final summary
+  ###########################################################################
+  section "✓ AgentOS deployed"
+  printf "  Server:     %s%s%s\n" "$c_green" "$SSH_ALIAS" "$c_reset"
+  printf "  Operator:   listening on Telegram\n"
+  printf "  Admins:     %s\n" "${TG_ADMIN_USERNAMES:-<none>}"
+  printf "\n"
+  printf "  Try it:\n"
+  printf "    1. Send any message to your bot on Telegram\n"
+  printf "    2. Or attach: %sssh %s -t 'sudo -u agent-os tmux attach -t operator'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
+  printf "    3. Check status: %sssh %s 'sudo bash /opt/agent-os/claude/scripts/verify.sh'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
+  printf "\n"
+  printf "  Re-run anytime: %sbash install.sh%s (resumes from state)\n" "$c_bold" "$c_reset"
+  printf "  State: %s\n" "$DEPLOY_STATE"
+  printf "  Deploy log: %s\n" "$DEPLOY_LOG"
 }
 
 # detect_mode dispatches BEFORE any Linux-specific check (os-release, apt, etc.).
