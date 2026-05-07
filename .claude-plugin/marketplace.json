@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "agentos-template",
+  "version": "0.1.0",
+  "description": "AgentOS template marketplace: vendored upstream defaults + AgentOS-native plugins.",
+  "owner": {
+    "name": "Novo Studio",
+    "email": "krylov@vasily.dev"
+  },
+  "plugins": [
+    {
+      "name": "agent-sdk-dev",
+      "version": "vendored-fb063cd",
+      "category": "development",
+      "path": "./plugins/agent-sdk-dev/",
+      "description": "Development kit for working with the Claude Agent SDK (scaffolds new SDK projects, py/ts verifiers).",
+      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/agent-sdk-dev"
+    },
+    {
+      "name": "code-review",
+      "version": "vendored-fb063cd",
+      "category": "development",
+      "path": "./plugins/code-review/",
+      "description": "Automated code review for pull requests using multiple specialized agents with confidence-based scoring.",
+      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/code-review"
+    },
+    {
+      "name": "commit-commands",
+      "version": "vendored-fb063cd",
+      "category": "productivity",
+      "path": "./plugins/commit-commands/",
+      "description": "Streamline your git workflow with simple commands for committing, pushing, and creating pull requests.",
+      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/commit-commands"
+    },
+    {
+      "name": "security-guidance",
+      "version": "vendored-fb063cd",
+      "category": "security",
+      "path": "./plugins/security-guidance/",
+      "description": "Security reminder hook that warns about potential security issues when editing files (command injection, XSS, unsafe code patterns).",
+      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/security-guidance"
+    },
+    {
+      "name": "template-dev",
+      "version": "0.0.0-placeholder",
+      "category": "agentos-core",
+      "path": "./plugins/template-dev/",
+      "description": "PLACEHOLDER. AgentOS-native sync skill that diffs T vs P files and applies T-only updates from the upstream main-template branch. To be implemented in a later task.",
+      "source": "internal"
+    },
+    {
+      "name": "agentos-core",
+      "version": "0.0.0-placeholder",
+      "category": "agentos-core",
+      "path": "./plugins/agentos-core/",
+      "description": "PLACEHOLDER. Meta-plugin exposing /agentos-status, /agentos-restart, /agentos-verify slash commands. To be implemented in a later task.",
+      "source": "internal"
+    }
+  ]
+}
