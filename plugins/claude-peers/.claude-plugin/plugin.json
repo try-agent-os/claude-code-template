@@ -6,6 +6,7 @@
   "mcpServers": "./mcp.json",
   "userConfig": {
     "broker_db_path": {
+      "title": "Broker DB path",
       "type": "string",
       "default": "${CLAUDE_PLUGIN_DATA}/claude-peers.db",
       "description": "Path to shared SQLite broker database"
