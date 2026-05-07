@@ -6,20 +6,34 @@
 
 ---
 
-## Install (one command)
+## Install
 
-The same `curl` one-liner works on **macOS** and **Linux** — `install.sh` detects the OS and picks the right path:
+`install.sh` detects the OS and picks the right path:
 
 - **macOS** → launches a guided remote-setup wizard that picks (or provisions) a Linux VPS, configures Telegram + Claude Code OAuth, and runs `install.sh` non-interactively on the remote.
 - **Linux as root** → runs the local 18-step install in place (the canonical AgentOS host).
+
+### Method A — clone & run (recommended, most reliable)
+
+```bash
+git clone https://github.com/try-agent-os/claude-code-template ~/agentos
+cd ~/agentos
+bash install.sh
+```
+
+Works the same on macOS and Linux — `install.sh` detects the OS and picks the right path. On macOS it launches the remote-setup wizard; on Ubuntu/Debian as root it does a local install in place (use `sudo bash install.sh` on Linux).
+
+### Method B — one-liner (curl into bash)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash
 ```
 
+Convenient but less reliable for interactive prompts under some terminal/stdin setups. If you hit issues with the wizard not waiting for input, fall back to Method A.
+
 On Linux you'll need `sudo` (the script aborts and re-asks if you forget); on macOS no root is needed locally — the wizard `ssh`'s into the VPS and runs `sudo` there.
 
-Prefer to read the script before running it? Same result, two steps:
+Prefer to read the script before running it? Method A already gives you the full repo to inspect (`less install.sh`) before invoking it. With Method B:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh -o install.sh
@@ -159,6 +173,8 @@ A browser window opens, you approve, the CLI prints a token like `sk-ant-oat01-.
 ssh you@your-vps
 curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | sudo bash
 ```
+
+(or use Method A from [Install](#install) — `git clone … && sudo bash install.sh` — if the curl pipe misbehaves with interactive prompts.)
 
 The wizard prompts for:
 
@@ -332,7 +348,7 @@ The recommended pattern is fork-then-update:
 
 The template uses a **T (template-owned) / P (project-owned)** file convention so you can tell at a glance which files upstream merges should overwrite vs. preserve. See [UPGRADING.md](./UPGRADING.md) for the full workflow, conflict resolution, version pinning, and rollback.
 
-To pull a newer install.sh into an existing install: re-run the same `curl | bash` command. State persists; the wizard skips already-completed steps.
+To pull a newer install.sh into an existing install: re-run the same `curl | bash` command (or `git pull && bash install.sh` if you used Method A). State persists; the wizard skips already-completed steps.
 
 ---
 
