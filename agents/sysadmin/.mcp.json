@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "saga-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3851/sse"
+    }
+  }
+}
