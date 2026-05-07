@@ -109,6 +109,11 @@ readonly CC_DIR_OPERATOR="${CLAUDE_CONFIG_BASE}/operator"
 readonly CC_DIR_DISPATCHER="${CLAUDE_CONFIG_BASE}/dispatcher"
 readonly CC_DIR_HEARTBEAT="${CLAUDE_CONFIG_BASE}/heartbeat"
 
+# Anthropic apt repo signing key fingerprint (per code.claude.com/docs/en/setup).
+# Keep in sync if Anthropic rotates the key — the install will refuse to proceed
+# until this matches what `gpg --show-keys` reports for the downloaded asc file.
+readonly ANTHROPIC_KEY_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+
 # Repos to clone. Override TEMPLATE_REPO via --bootstrap-personal-repo.
 # claude-peers and telegram are now vendored as plugins inside the template
 # repo (plugins/claude-peers, plugins/telegram). saga-mcp remains a separate
@@ -1354,32 +1359,50 @@ fi
 mark_step_completed 4
 
 ###############################################################################
-# Step 5 — Claude Code via official bootstrap
+# Step 5 — Claude Code from signed apt repo (canonical, per code.claude.com/docs)
 #
-# NOTE: Anthropic decommissioned the deb apt repo at downloads.claude.ai/claude-code/apt
-# (returned 404s starting ~mid-2026). The canonical install path is now the
-# bootstrap script at https://claude.ai/install.sh, which downloads a signed
-# native binary (SHA-256 verified inside the bootstrap) into ~/.local/bin/claude.
-# We symlink to /usr/local/bin so the agent-os user (created in Step 6) can
-# invoke it without PATH gymnastics in systemd units.
+# History note: an earlier URL (downloads.claude.ai/claude-code/apt without the
+# `/stable` channel suffix) was 404. The correct, currently-published path is
+# `…/apt/stable stable main` with the GPG key under `/keys/claude-code.asc`.
+# Bootstrap installer (https://claude.ai/install.sh) was tried as a workaround
+# but it lands the binary in /root/.local/bin which is unreadable to the
+# agent-os system user (mode 0700 on /root). apt installs to /usr/bin/claude,
+# system-wide readable, plus gives proper `apt-get upgrade claude-code`.
 ###############################################################################
-step "5/18 claude-code (official bootstrap)"
+step "5/18 claude-code (signed apt repo)"
 
-# Self-heal: clean up legacy apt repo artifacts from older install.sh versions.
-# The URL they reference (downloads.claude.ai/claude-code/apt) is decommissioned
-# and breaks any subsequent `apt-get update` (Step 3 on re-run).
-rm -f /etc/apt/sources.list.d/claude-code.list /usr/share/keyrings/anthropic.gpg
+KEYRING="/etc/apt/keyrings/claude-code.asc"
+SOURCES_LIST="/etc/apt/sources.list.d/claude-code.list"
 
-if ! command -v claude >/dev/null 2>&1; then
-  curl -fsSL https://claude.ai/install.sh | bash
+install -d -m 0755 /etc/apt/keyrings
+
+if [[ ! -f "$KEYRING" ]]; then
+  curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$KEYRING"
+  # Verify fingerprint against the value pinned at code.claude.com/docs/en/setup
+  actual_fpr=$(gpg --show-keys --with-colons "$KEYRING" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
+  if [[ "$actual_fpr" != "$ANTHROPIC_KEY_FPR" ]]; then
+    rm -f "$KEYRING"
+    fail "Anthropic GPG key fingerprint mismatch: got $actual_fpr, expected $ANTHROPIC_KEY_FPR"
+  fi
+  log "  GPG key fingerprint verified: $actual_fpr"
 fi
 
-if [[ -x "/root/.local/bin/claude" ]] && [[ ! -e "/usr/local/bin/claude" ]]; then
-  ln -sf /root/.local/bin/claude /usr/local/bin/claude
+if [[ ! -f "$SOURCES_LIST" ]]; then
+  echo "deb [signed-by=${KEYRING}] https://downloads.claude.ai/claude-code/apt/stable stable main" \
+    > "$SOURCES_LIST"
 fi
 
+# Clean up any orphaned bootstrap install from a prior install.sh run on this host
+if [[ -L /usr/local/bin/claude ]] && [[ "$(readlink /usr/local/bin/claude)" == /root/.local/bin/claude ]]; then
+  rm -f /usr/local/bin/claude
+fi
+rm -rf /root/.local/share/claude /root/.local/bin/claude 2>/dev/null || true
+
+apt-get update -qq
+apt-get install -y claude-code
+
 if ! command -v claude >/dev/null 2>&1; then
-  fail "claude-code installed but 'claude' not on PATH — expected /root/.local/bin/claude with symlink at /usr/local/bin/claude."
+  fail "claude-code installed but 'claude' not on PATH — investigate apt postinst."
 fi
 log "  claude --version: $(claude --version 2>&1 | head -1)"
 mark_step_completed 5
