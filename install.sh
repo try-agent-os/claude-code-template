@@ -267,6 +267,320 @@ case "$WHISPER_MODEL" in
 esac
 
 ###############################################################################
+# Smart entrypoint: macOS → remote-setup wizard, Linux/root → local install
+#
+# The same install.sh works two ways:
+#   • Run on a Mac → orchestrates a remote VPS install (provisions or attaches
+#     to an existing SSH alias, rsyncs the repo, runs install.sh remotely with
+#     --non-interactive).
+#   • Run on Linux as root → installs AgentOS locally (existing flow below).
+#
+# This dispatch happens AFTER arg parsing so wizard answers can come from env
+# (PROJECT_NAME, TG_BOT_TOKEN, etc.) and known flags are already consumed.
+###############################################################################
+detect_mode() {
+  if [ "$(uname)" = "Darwin" ]; then
+    echo "remote-setup"
+  elif [ "$(uname)" = "Linux" ] && [ -d /etc/systemd/system ]; then
+    if [ "$(id -u)" -ne 0 ]; then
+      printf "%s✗%s install.sh on Linux must run as root. Re-run with: sudo bash install.sh\n" "$c_red" "$c_reset" >&2
+      exit 1
+    fi
+    echo "local-install"
+  else
+    printf "%s✗%s Unsupported environment. install.sh runs on macOS (provisions remote VPS) or Ubuntu/Debian root (local install).\n" "$c_red" "$c_reset" >&2
+    exit 1
+  fi
+}
+
+###############################################################################
+# Mac branch — remote-setup wizard
+###############################################################################
+DEPLOY_STATE_DIR="$HOME/.agent-os-deploy"
+DEPLOY_STATE="${DEPLOY_STATE_DIR}/state.json"
+
+deploy_state_init() {
+  mkdir -p "$DEPLOY_STATE_DIR"
+  if [ ! -f "$DEPLOY_STATE" ]; then
+    echo '{"version":1,"hosts":{}}' > "$DEPLOY_STATE"
+  fi
+}
+
+deploy_state_save_host() {
+  # args: alias ip provider region size
+  local alias="$1" ip="$2" provider="$3" region="$4" size="$5"
+  local now; now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  jq --arg a "$alias" --arg ip "$ip" --arg p "$provider" --arg r "$region" --arg s "$size" --arg now "$now" \
+    '.hosts[$a] = {ip:$ip, provider:$p, region:$r, size:$s, created_at:$now}' \
+    "$DEPLOY_STATE" > "$DEPLOY_STATE.tmp" && mv "$DEPLOY_STATE.tmp" "$DEPLOY_STATE"
+}
+
+deploy_state_known_aliases() {
+  jq -r '.hosts | keys[]' "$DEPLOY_STATE" 2>/dev/null || true
+}
+
+# Check that a CLI is installed; if not, suggest brew install and bail.
+require_cli() {
+  local cli="$1" pkg="$2"
+  if ! command -v "$cli" >/dev/null 2>&1; then
+    fail "$cli not found. Install with: brew install $pkg"
+  fi
+}
+
+# Append (idempotent) an SSH alias to ~/.ssh/config.
+ssh_config_add_alias() {
+  local alias="$1" ip="$2" identity="${3:-~/.ssh/id_ed25519}"
+  local cfg="$HOME/.ssh/config"
+  mkdir -p "$HOME/.ssh"
+  touch "$cfg"
+  chmod 600 "$cfg"
+  if grep -qE "^Host[[:space:]]+${alias}\$" "$cfg" 2>/dev/null; then
+    info "  ~/.ssh/config already has Host '$alias' — leaving as is."
+    return
+  fi
+  cat >> "$cfg" <<EOF
+
+Host ${alias}
+  HostName ${ip}
+  User root
+  IdentityFile ${identity}
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
+  ok "  added ~/.ssh/config Host '$alias' → $ip"
+}
+
+# Wait for SSH to become reachable on a freshly-provisioned host.
+wait_until_ssh_ready() {
+  local alias="$1" tries=0 max=60
+  printf "  Waiting for sshd on %s" "$alias"
+  while ! ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new -o BatchMode=yes "$alias" true 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge "$max" ]; then
+      printf "\n"
+      fail "sshd on $alias did not respond within ~5 min."
+    fi
+    printf "."
+    sleep 5
+  done
+  printf "\n"
+  ok "  sshd on $alias ready."
+}
+
+prompt_existing_alias() {
+  header "Pick existing SSH alias"
+  local known_hosts
+  known_hosts=$(awk '/^[Hh]ost[[:space:]]+[^*]+$/ {print $2}' "$HOME/.ssh/config" 2>/dev/null || true)
+  if [ -n "$known_hosts" ]; then
+    info "  Hosts in ~/.ssh/config:"
+    echo "$known_hosts" | sed 's/^/    - /'
+  else
+    warn "  No Host entries found in ~/.ssh/config."
+  fi
+  printf "  Alias to use: "
+  read -r SSH_ALIAS
+  if [ -z "${SSH_ALIAS:-}" ]; then
+    fail "No alias provided."
+  fi
+}
+
+provision_do_droplet() {
+  header "Provision DigitalOcean droplet"
+  require_cli doctl doctl
+  local region size name ssh_key_id ip
+  printf "  Droplet name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Region [%sfra1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fra1}"
+  printf "  Size [%ss-4vcpu-8gb%s] (~\$48/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-s-4vcpu-8gb}"
+  ssh_key_id=$(doctl compute ssh-key list --format ID --no-header 2>/dev/null | head -1 || true)
+  if [ -z "$ssh_key_id" ]; then
+    fail "doctl: no SSH keys registered. Add one with: doctl compute ssh-key import"
+  fi
+  info "  Creating droplet '$name' in $region ($size)…"
+  ip=$(doctl compute droplet create "$name" \
+        --image ubuntu-24-04-x64 \
+        --size "$size" \
+        --region "$region" \
+        --ssh-keys "$ssh_key_id" \
+        --wait \
+        --format PublicIPv4 --no-header)
+  if [ -z "$ip" ]; then
+    fail "doctl did not return a public IP."
+  fi
+  ok "  droplet up: $ip"
+  SSH_ALIAS="$name"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  wait_until_ssh_ready "$SSH_ALIAS"
+  deploy_state_save_host "$SSH_ALIAS" "$ip" "digitalocean" "$region" "$size"
+}
+
+provision_hetzner() {
+  header "Provision Hetzner Cloud server"
+  require_cli hcloud hcloud
+  local region size name ssh_key_name ip
+  printf "  Server name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Location [%sfsn1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fsn1}"
+  printf "  Type [%scax21%s] (~€7/mo, ARM): " "$c_blue" "$c_reset"; read -r size; size="${size:-cax21}"
+  ssh_key_name=$(hcloud ssh-key list -o noheader -o columns=name 2>/dev/null | head -1 || true)
+  if [ -z "$ssh_key_name" ]; then
+    fail "hcloud: no SSH keys registered. Add one with: hcloud ssh-key create"
+  fi
+  info "  Creating server '$name' in $region ($size)…"
+  local out
+  out=$(hcloud server create \
+          --name "$name" \
+          --image ubuntu-24.04 \
+          --type "$size" \
+          --location "$region" \
+          --ssh-key "$ssh_key_name" \
+          -o json)
+  ip=$(echo "$out" | jq -r '.server.public_net.ipv4.ip')
+  if [ -z "$ip" ] || [ "$ip" = "null" ]; then
+    fail "hcloud did not return a public IP. Raw: $out"
+  fi
+  ok "  server up: $ip"
+  SSH_ALIAS="$name"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  wait_until_ssh_ready "$SSH_ALIAS"
+  deploy_state_save_host "$SSH_ALIAS" "$ip" "hetzner" "$region" "$size"
+}
+
+provision_linode() {
+  header "Provision Linode"
+  require_cli linode-cli linode-cli
+  local region size name pubkey ip
+  printf "  Linode label [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
+  printf "  Region [%seu-central%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-eu-central}"
+  printf "  Type [%sg6-standard-2%s] (~\$24/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-g6-standard-2}"
+  if [ ! -f "$HOME/.ssh/id_ed25519.pub" ]; then
+    fail "~/.ssh/id_ed25519.pub not found. Generate one with: ssh-keygen -t ed25519"
+  fi
+  pubkey=$(cat "$HOME/.ssh/id_ed25519.pub")
+  info "  Creating Linode '$name' in $region ($size)…"
+  ip=$(linode-cli linodes create \
+        --label "$name" \
+        --image linode/ubuntu24.04 \
+        --type "$size" \
+        --region "$region" \
+        --authorized_keys "$pubkey" \
+        --json | jq -r '.[0].ipv4[0]')
+  if [ -z "$ip" ] || [ "$ip" = "null" ]; then
+    fail "linode-cli did not return a public IP."
+  fi
+  ok "  Linode up: $ip"
+  SSH_ALIAS="$name"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  wait_until_ssh_ready "$SSH_ALIAS"
+  deploy_state_save_host "$SSH_ALIAS" "$ip" "linode" "$region" "$size"
+}
+
+exec_remote_setup_wizard() {
+  # Sanity: jq is required for state file
+  if ! command -v jq >/dev/null 2>&1; then
+    fail "jq not found on this Mac. Install with: brew install jq"
+  fi
+  deploy_state_init
+
+  section "AgentOS Remote Setup"
+  info "Running on macOS — will provision (or attach to) a VPS and install AgentOS remotely."
+
+  # Show previous hosts (resume hint)
+  local prev_aliases
+  prev_aliases=$(deploy_state_known_aliases)
+  if [ -n "$prev_aliases" ]; then
+    info "Previously known hosts (from $DEPLOY_STATE):"
+    echo "$prev_aliases" | sed 's/^/  - /'
+  fi
+
+  # ─── Step 1: Pick host
+  header "Step 1 of 6: Target host"
+  echo "  1) Use existing SSH alias from ~/.ssh/config"
+  echo "  2) Provision new DigitalOcean droplet (doctl)"
+  echo "  3) Provision new Hetzner Cloud server (hcloud)"
+  echo "  4) Provision new Linode (linode-cli)"
+  printf "Choose [%sdefault: 1%s]: " "$c_blue" "$c_reset"
+  read -r choice
+  choice="${choice:-1}"
+
+  case "$choice" in
+    1) prompt_existing_alias ;;
+    2) provision_do_droplet ;;
+    3) provision_hetzner ;;
+    4) provision_linode ;;
+    *) fail "Invalid choice" ;;
+  esac
+
+  if [ -z "${SSH_ALIAS:-}" ]; then
+    fail "SSH_ALIAS not set after host selection."
+  fi
+
+  # ─── Step 2: Verify SSH
+  header "Step 2 of 6: SSH connectivity to '$SSH_ALIAS'"
+  if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$SSH_ALIAS" true 2>/dev/null; then
+    fail "SSH to $SSH_ALIAS failed. Check ~/.ssh/config and key access."
+  fi
+  ok "SSH to $SSH_ALIAS works."
+
+  # ─── Step 3: Collect inputs
+  header "Step 3 of 6: Configuration"
+  PROJECT_NAME=$(ask "Project slug" "project_name" "myagentos")
+  TG_USER_ID=$(ask "Your Telegram user ID (numeric)" "tg_user_id" "")
+  GIT_REMOTE=$(ask "Git remote (optional, blank to skip)" "git_remote" "")
+  TIMEZONE=$(ask "Timezone (IANA)" "timezone" "Europe/Lisbon")
+  WHISPER_MODEL=$(ask "Whisper model (tiny|base|medium)" "whisper_model" "medium")
+  TG_BOT_TOKEN=$(ask_secret "Telegram bot token" "TELEGRAM_BOT_TOKEN_TMP")
+  CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "Claude OAuth token (run 'claude setup-token' on this Mac if needed)" "CLAUDE_OAUTH_TMP")
+
+  # ─── Step 4: Push template to remote
+  header "Step 4 of 6: Push template to $SSH_ALIAS"
+  local REMOTE_DIR=/tmp/agent-os-bootstrap
+  local LOCAL_REPO_ROOT
+  LOCAL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  ssh "$SSH_ALIAS" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
+  rsync -az \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='.worktrees' \
+    --exclude='dist' \
+    "$LOCAL_REPO_ROOT/" "$SSH_ALIAS:$REMOTE_DIR/"
+  ok "Template synced to $SSH_ALIAS:$REMOTE_DIR"
+
+  # ─── Step 5: Run install.sh on remote (non-interactive)
+  header "Step 5 of 6: Remote install"
+  info "  This typically takes ~5–8 minutes (apt + node + claude-code + plugins + whisper model)."
+  ssh "$SSH_ALIAS" "cd $REMOTE_DIR && \
+    PROJECT_NAME='$PROJECT_NAME' \
+    TG_USER_ID='$TG_USER_ID' \
+    GIT_REMOTE='$GIT_REMOTE' \
+    TIMEZONE='$TIMEZONE' \
+    WHISPER_MODEL='$WHISPER_MODEL' \
+    TELEGRAM_BOT_TOKEN='$TG_BOT_TOKEN' \
+    CLAUDE_CODE_OAUTH_TOKEN='$CLAUDE_CODE_OAUTH_TOKEN' \
+    sudo -E bash install.sh --non-interactive"
+
+  # ─── Step 6: Verify
+  header "Step 6 of 6: Verify"
+  if ssh "$SSH_ALIAS" "test -x /opt/agent-os/claude/scripts/verify.sh"; then
+    ssh "$SSH_ALIAS" "sudo bash /opt/agent-os/claude/scripts/verify.sh" || warn "verify.sh reported issues."
+  else
+    info "  scripts/verify.sh not present in repo — using systemctl probe."
+    ssh "$SSH_ALIAS" "sudo systemctl is-active agent-os-saga.service agent-os-dispatcher.timer 2>&1 | head -5" \
+      || warn "Some units inactive. Inspect: ssh $SSH_ALIAS 'sudo systemctl status agent-os-*'"
+  fi
+
+  section "Done"
+  printf "AgentOS deployed to %s%s%s.\n" "$c_green" "$SSH_ALIAS" "$c_reset"
+  printf "Attach to operator: %sssh %s -t 'sudo -u agent-os tmux attach -t operator'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
+  printf "Re-run anytime: %sbash install.sh%s (state at %s)\n" "$c_bold" "$c_reset" "$DEPLOY_STATE"
+}
+
+MODE=$(detect_mode)
+if [ "$MODE" = "remote-setup" ]; then
+  exec_remote_setup_wizard "$@"
+  exit $?
+fi
+# else: fall through to local install logic below
+
+###############################################################################
 # Step 1 — sanity (root, OS, arch)
 ###############################################################################
 step "1/18 sanity checks"
@@ -696,6 +1010,16 @@ umask 077
   echo "# --- Behaviour ---"
   echo "DISABLE_AUTOUPDATER=1"
   echo "MCP_CONNECTION_NONBLOCKING=true"
+  echo
+  echo "# --- T11 lifecycle hooks (.claude/hooks/*) ---"
+  echo "# OPERATOR_PEER_ID is empty by default — set it after the operator boots"
+  echo "# and registers itself with claude-peers (see /var/log/agent-os/operator.log)."
+  echo "OPERATOR_PEER_ID=${OPERATOR_PEER_ID:-}"
+  echo "CLAUDE_PEERS_API_URL=http://127.0.0.1:7899/send-message"
+  echo "CLAUDE_PEERS_HEALTH_URL=http://127.0.0.1:7899/health"
+  echo "SAGA_MCP_HEALTH_URL=http://localhost:3851/health"
+  echo "AGENTOS_HOOKS_LOG_DIR=/tmp/agentos-hooks"
+  echo "AGENTOS_AUDIT_LOG=${INSTALL_ROOT}/claude/.claude/audit.log"
 } > "$ENV_FILE"
 chown root:"$AGENT_USER" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"

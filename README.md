@@ -1,6 +1,23 @@
 # Claude Code Template
 
-> Minimal AgentOS template for Claude Code: orchestrator + dispatcher + one example skill.
+> Production-ready AgentOS for Claude Code. One command — auto-detects Mac (provisions VPS) vs Linux root (installs locally).
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash
+```
+
+That's it. Works on:
+
+- **macOS** — walks you through picking an existing SSH alias or provisioning a fresh VPS (DigitalOcean / Hetzner / Linode), then installs AgentOS remotely.
+- **Ubuntu 22.04+ / Debian 12+ as root** — installs everything locally (saga-mcp + dispatcher + operator + 4 vendored plugins).
+
+State for re-runs:
+- Mac wizard: `~/.agent-os-deploy/state.json`
+- Linux install: `/etc/agent-os/install.state.json`
+
+For the full architecture and component list see [`CLAUDE.md`](./CLAUDE.md).
 
 ## Structure
 
