@@ -59,10 +59,10 @@
     },
     {
       "name": "template-dev",
-      "version": "0.0.0-placeholder",
+      "version": "0.1.0",
       "category": "agentos-core",
       "path": "./plugins/template-dev/",
-      "description": "PLACEHOLDER. AgentOS-native sync skill that diffs T vs P files and applies T-only updates from the upstream main-template branch. To be implemented in a later task.",
+      "description": "Fork-ahead workflow for AgentOS template: bootstrap personal repo from template, sync upstream updates, manage template-managed vs personal-owned files.",
       "source": "internal"
     },
     {
