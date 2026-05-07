@@ -1339,6 +1339,11 @@ mark_step_completed 4
 ###############################################################################
 step "5/18 claude-code (official bootstrap)"
 
+# Self-heal: clean up legacy apt repo artifacts from older install.sh versions.
+# The URL they reference (downloads.claude.ai/claude-code/apt) is decommissioned
+# and breaks any subsequent `apt-get update` (Step 3 on re-run).
+rm -f /etc/apt/sources.list.d/claude-code.list /usr/share/keyrings/anthropic.gpg
+
 if ! command -v claude >/dev/null 2>&1; then
   curl -fsSL https://claude.ai/install.sh | bash
 fi
