@@ -1,4 +1,4 @@
-<!-- This is a template prompt. <PROJECT_NAME>, <PROJECT_SLUG>, <REPO_URL>, ${REPO_ROOT}, ${TZ}
+<!-- This is a template prompt. {PROJECT_NAME}, {PROJECT_SLUG}, {REPO_URL}, ${REPO_ROOT}, ${TZ}
      are placeholders that get substituted by install.sh / runtime context. T08 will introduce
      deeper genericization and dynamic !`<cmd>` injection; T01 only does basic strip. -->
 

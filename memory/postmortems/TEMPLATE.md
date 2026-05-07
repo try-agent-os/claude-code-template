@@ -30,7 +30,7 @@ Numbered steps that actually fixed it. Include exact commands.
 
 ```bash
 # example
-launchctl kickstart -k "gui/$(id -u)/com.<PROJECT_SLUG>.<service>"
+launchctl kickstart -k "gui/$(id -u)/com.{PROJECT_SLUG}.<service>"
 ```
 
 ## How to detect

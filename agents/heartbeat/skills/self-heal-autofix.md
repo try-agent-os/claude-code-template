@@ -26,7 +26,7 @@ read_when: Called after self-heal-diagnose.md with a populated diagnosis JSON; d
 | `auth_expired` | RB-007 | NO → escalate |
 | `unknown` | RB-008 | NO → escalate |
 
-NOTE: launchd service labels in this runbook use `com.<PROJECT_SLUG>.<service>`. Replace `<PROJECT_SLUG>` with your deployment's slug. Epic IDs resolve via `memory/epic-map.json` — references like "Infra epic" mean the AgentOS infrastructure epic.
+NOTE: launchd service labels in this runbook use `com.{PROJECT_SLUG}.<service>`. Replace `{PROJECT_SLUG}` with your deployment's slug. Epic IDs resolve via `memory/epic-map.json` — references like "Infra epic" mean the AgentOS infrastructure epic.
 
 ---
 
@@ -56,14 +56,14 @@ Port → launchd label mapping:
 
 | Port | Service | launchd label |
 |------|---------|---------------|
-| 3851 | saga-mcp | `com.<PROJECT_SLUG>.saga-mcp` |
-| 3848 | telegram-mcp | `com.<PROJECT_SLUG>.telegram-mcp` |
-| 7899 | claude-peers | `com.<PROJECT_SLUG>.claude-peers-broker` |
+| 3851 | saga-mcp | `com.{PROJECT_SLUG}.saga-mcp` |
+| 3848 | telegram-mcp | `com.{PROJECT_SLUG}.telegram-mcp` |
+| 7899 | claude-peers | `com.{PROJECT_SLUG}.claude-peers-broker` |
 
 You can also cross-check via:
 
 ```bash
-launchctl list | grep <PROJECT_SLUG>
+launchctl list | grep {PROJECT_SLUG}
 # Format: PID | ExitCode | Label
 # PID = "-" means service not running
 # ExitCode != 0 means service crashed
@@ -72,7 +72,7 @@ launchctl list | grep <PROJECT_SLUG>
 ### Step 2: Kickstart the failed service
 
 ```bash
-FAILED_LABEL="com.<PROJECT_SLUG>.saga-mcp"  # replace with the actual label
+FAILED_LABEL="com.{PROJECT_SLUG}.saga-mcp"  # replace with the actual label
 USER_ID=$(id -u)
 
 launchctl kickstart -k "gui/${USER_ID}/${FAILED_LABEL}"
@@ -131,7 +131,7 @@ echo "${TIMESTAMP} | RB-001 | ${FAILED_LABEL} | kickstart: ${RESULT} | health: $
    mcp__saga-mcp__task_create(
      epic_id: <Infra epic id>,
      title: "ESCALATE: MCP {FAILED_LABEL} did not recover after kickstart",
-     description: "RB-001 autofix didn't help. Manual diagnosis required.\n\nEvidence:\n- launchctl kickstart executed\n- health check after 5s: {HEALTH}\n\nNext steps:\n1. Check logs: ~/Library/Logs/<PROJECT_SLUG>/{label}.log\n2. Verify plist in ~/Library/LaunchAgents/\n3. Manual restart or reboot",
+     description: "RB-001 autofix didn't help. Manual diagnosis required.\n\nEvidence:\n- launchctl kickstart executed\n- health check after 5s: {HEALTH}\n\nNext steps:\n1. Check logs: ~/Library/Logs/{PROJECT_SLUG}/{label}.log\n2. Verify plist in ~/Library/LaunchAgents/\n3. Manual restart or reboot",
      priority: "high"
    )
    ```
@@ -286,7 +286,7 @@ echo "${TIMESTAMP} | RB-003 | no orphans found" >> memory/autofix.log
 
 ```bash
 USER_ID=$(id -u)
-launchctl print "gui/${USER_ID}/com.<PROJECT_SLUG>.heartbeat-dispatcher" 2>&1 | grep -E "last-exit|time-since"
+launchctl print "gui/${USER_ID}/com.{PROJECT_SLUG}.heartbeat-dispatcher" 2>&1 | grep -E "last-exit|time-since"
 ```
 
 Expected output contains `time since last exit` — seconds since the last run.
@@ -307,7 +307,7 @@ If the gap > 45 minutes (2700 seconds) — kickstart.
 
 ```bash
 USER_ID=$(id -u)
-launchctl kickstart -k "gui/${USER_ID}/com.<PROJECT_SLUG>.heartbeat-dispatcher"
+launchctl kickstart -k "gui/${USER_ID}/com.{PROJECT_SLUG}.heartbeat-dispatcher"
 ```
 
 `-k` = kill + restart (idempotent).
@@ -448,6 +448,6 @@ mcp__saga-mcp__task_create(
 
 ## Related files
 
-- `<REPO_URL>/agents/heartbeat/skills/self-heal-diagnose.md` — L2 diagnosis (previous step)
-- `<REPO_URL>/memory/self-heal-runbook.md` — runbook catalog
-- `<REPO_URL>/research/self-healing-architecture.md` — full architecture
+- `{REPO_URL}/agents/heartbeat/skills/self-heal-diagnose.md` — L2 diagnosis (previous step)
+- `{REPO_URL}/memory/self-heal-runbook.md` — runbook catalog
+- `{REPO_URL}/research/self-healing-architecture.md` — full architecture

@@ -1,4 +1,4 @@
-<!-- This is a template prompt. <PROJECT_NAME>, <PROJECT_SLUG>, <REPO_URL>, ${REPO_ROOT}, ${TZ}
+<!-- This is a template prompt. {PROJECT_NAME}, {PROJECT_SLUG}, {REPO_URL}, ${REPO_ROOT}, ${TZ}
      are placeholders that get substituted by install.sh / runtime context. T08 will introduce
      deeper genericization and dynamic !`<cmd>` injection; T01 only does basic strip. -->
 
@@ -27,10 +27,10 @@ You are the AgentOS strategist. You think on top of the data the skills have col
 
 ### Step 0: Health Check
 
-Read [`agents/heartbeat/skills/strategist/health-watchdog.md`](<REPO_URL>/blob/main/agents/heartbeat/skills/strategist/health-watchdog.md) and run the full watchdog algorithm:
+Read [`agents/heartbeat/skills/strategist/health-watchdog.md`]({REPO_URL}/blob/main/agents/heartbeat/skills/strategist/health-watchdog.md) and run the full watchdog algorithm:
 - Analyze `memory/worker-errors.log` (last 50 lines)
 - Compute metrics: crash_rate_2h, max_iter_rate_2h, crash_streak, dispatcher_gap
-- Check launchd: `launchctl list | grep <PROJECT_SLUG>`
+- Check launchd: `launchctl list | grep {PROJECT_SLUG}`
 - Check MCP: `curl -s localhost:3851/health` + `localhost:3848/health` + `127.0.0.1:7899/health`
 - On anomaly >= threshold → create a task in saga (epic `Infra`) + notify the operator (only if critical)
 - On normal → write a line to `logs/health/watchdog.log` and continue

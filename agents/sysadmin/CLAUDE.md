@@ -6,11 +6,11 @@ Project context: [`CLAUDE.md`](../../CLAUDE.md) (repo root).
 Personality: [`SOUL.md`](./SOUL.md) — character, voice, principles.
 
 > **Pre-flight configuration.** Set these placeholders before using:
-> - `<PROJECT_SLUG>` — short slug for service labels (e.g. `agentos`)
-> - `<REPO_ROOT>` — absolute path to the AgentOS repo on this machine (auto-detect via `git rev-parse --show-toplevel`)
-> - `<EPIC_ID:*>` — epic IDs in saga-mcp (created once via `init-epics.sh`)
-> - `<PROJECT_ID>` — project ID in saga-mcp
-> - `<USER_TELEGRAM_CHAT_ID>` — your Telegram chat_id (optional, only if telegram-mcp is enabled)
+> - `{PROJECT_SLUG}` — short slug for service labels (e.g. `agentos`)
+> - `{INSTALL_ROOT}` — absolute path to the AgentOS repo on this machine (auto-detect via `git rev-parse --show-toplevel`)
+> - epic IDs — auto-resolved from `memory/epic-map.json` at runtime (built on first install by `init-epics.sh`; default epics: Default / Research / Business / Infra / Scheduled)
+> - `{PROJECT_ID}` — project ID in saga-mcp
+> - `{TG_USER_ID}` — your Telegram chat_id (optional, only if telegram-mcp is enabled)
 
 ## Principle
 
@@ -52,7 +52,7 @@ Unclear → one clarifying question
 
 This session is NOT connected to Telegram directly. To send a message:
 - Via claude-peers: `list_peers(scope: "machine")` → find operator → `send_message(to_id: "<id>", message: "text")`
-- Via telegram MCP (if running): `telegram_send_message(chat_id: <USER_TELEGRAM_CHAT_ID>, text: "message")`
+- Via telegram MCP (if running): `telegram_send_message(chat_id: {TG_USER_ID}, text: "message")`
 
 ## Startup
 
@@ -63,7 +63,7 @@ When you receive the first user message — assemble the picture:
    **Service manager** (launchd on mac, systemd on linux — should be running):
    ```bash
    # macOS
-   launchctl list | grep <PROJECT_SLUG>
+   launchctl list | grep {PROJECT_SLUG}
    # Linux
    systemctl --user list-units 'agent-os-*' --state=active
 
@@ -89,10 +89,10 @@ When you receive the first user message — assemble the picture:
 
    ```bash
    # macOS launchd (if not loaded)
-   launchctl load ~/Library/LaunchAgents/com.<PROJECT_SLUG>.claude-peers-broker.plist
-   launchctl load ~/Library/LaunchAgents/com.<PROJECT_SLUG>.saga-mcp.plist
-   launchctl load ~/Library/LaunchAgents/com.<PROJECT_SLUG>.telegram-mcp.plist        # optional
-   launchctl load ~/Library/LaunchAgents/com.<PROJECT_SLUG>.heartbeat-dispatcher.plist
+   launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.claude-peers-broker.plist
+   launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.saga-mcp.plist
+   launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.telegram-mcp.plist        # optional
+   launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.heartbeat-dispatcher.plist
    tmux new-session -d -s caffeinate 'caffeinate -d'
 
    # Linux systemd
@@ -104,25 +104,25 @@ When you receive the first user message — assemble the picture:
    tmux ls 2>/dev/null | grep '^worker-' | cut -d: -f1 | xargs -I{} tmux kill-session -t {} 2>/dev/null || true
 
    # Operator
-   bash <REPO_ROOT>/agents/operator/start.sh
+   bash {INSTALL_ROOT}/agents/operator/start.sh
    ```
 
    **Launching sysadmin (with channel push from peers):**
    ```bash
-   cd <REPO_ROOT>/agents/sysadmin
+   cd {INSTALL_ROOT}/agents/sysadmin
    claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-peers
    ```
 
    In tmux:
    ```bash
-   tmux new-session -d -s sysadmin -c <REPO_ROOT>/agents/sysadmin \
+   tmux new-session -d -s sysadmin -c {INSTALL_ROOT}/agents/sysadmin \
      'claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-peers'
    ```
 
    MCP servers (claude-peers, saga-mcp) auto-load. Channel push is required to receive messages from other agents in real time.
 
 2. Read `memory/context.md`
-3. Check the queue: `mcp__saga-mcp__tracker_dashboard(project_id: <PROJECT_ID>)` or `mcp__saga-mcp__task_list()`
+3. Check the queue: `mcp__saga-mcp__tracker_dashboard(project_id: {PROJECT_ID})` or `mcp__saga-mcp__task_list()`
 4. Output a one-line status
 
 If everything is empty: `AgentOS online. Awaiting task.`

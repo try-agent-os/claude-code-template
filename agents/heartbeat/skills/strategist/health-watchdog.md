@@ -10,7 +10,7 @@ read_when: Beginning of every strategist cycle; run first to assess system healt
 
 **Sources:** `memory/worker-errors.log` (errors), `memory/worker-activity.log` (dispatcher_gap), saga-mcp, launchd, MCP health endpoints.
 
-NOTE: Epic IDs resolve via `memory/epic-map.json`. References like "Infra epic" mean the AgentOS infrastructure epic. launchd labels use the form `com.<PROJECT_SLUG>.<service>`.
+NOTE: Epic IDs resolve via `memory/epic-map.json`. References like "Infra epic" mean the AgentOS infrastructure epic. launchd labels use the form `com.{PROJECT_SLUG}.<service>`.
 
 ---
 
@@ -51,7 +51,7 @@ Count:
 ### Step 3: Check launchd
 
 ```bash
-launchctl list | grep <PROJECT_SLUG>
+launchctl list | grep {PROJECT_SLUG}
 ```
 
 For each service check the "Status" column (first column):
@@ -59,7 +59,7 @@ For each service check the "Status" column (first column):
 - nonzero = error on last start
 - missing = not loaded
 
-Key services: `com.<PROJECT_SLUG>.heartbeat-dispatcher`, `com.<PROJECT_SLUG>.strategist`, `com.<PROJECT_SLUG>.saga-mcp`, `com.<PROJECT_SLUG>.telegram-mcp`, `com.<PROJECT_SLUG>.claude-peers`.
+Key services: `com.{PROJECT_SLUG}.heartbeat-dispatcher`, `com.{PROJECT_SLUG}.strategist`, `com.{PROJECT_SLUG}.saga-mcp`, `com.{PROJECT_SLUG}.telegram-mcp`, `com.{PROJECT_SLUG}.claude-peers`.
 
 ### Step 4: Check MCP health
 
@@ -178,16 +178,16 @@ If all metrics are normal:
 | `max_iter_rate >= 40%` | Inspect queue task sizes, decompose large ones. Tag a task "decompose" in Infra epic. |
 | `crash_rate >= 40%` | Check MCP availability, compare with last successful runs. "diagnose" task in Infra epic. |
 | `zombie_rate >= 30%` | Zombie flood — kill all worker-* tmux sessions, reset in_progress to todo. |
-| `dispatcher_gap > 45 min` | Check launchd: `launchctl kickstart -k gui/$(id -u)/com.<PROJECT_SLUG>.heartbeat-dispatcher`. |
+| `dispatcher_gap > 45 min` | Check launchd: `launchctl kickstart -k gui/$(id -u)/com.{PROJECT_SLUG}.heartbeat-dispatcher`. |
 | `queue_depth > 15` | Pause scheduled tasks, reprioritize — surface only user tasks at top. |
 | `saga_orphan > 3` | Run reset: for each orphan task `task_update(status: "todo")`. |
-| `MCP down` | Kickstart: `launchctl kickstart -k gui/$(id -u)/com.<PROJECT_SLUG>.<service-name>`. |
+| `MCP down` | Kickstart: `launchctl kickstart -k gui/$(id -u)/com.{PROJECT_SLUG}.<service-name>`. |
 
 ---
 
 ## Related documents
 
-- `<REPO_URL>/research/self-healing-architecture.md` — full 3-level self-healing architecture
-- `<REPO_URL>/memory/worker-errors.log` — source of error/crash data
-- `<REPO_URL>/memory/worker-activity.log` — dispatcher_start records for the dispatcher_gap metric
-- `<REPO_URL>/agents/heartbeat/strategist-prompt.md` — caller prompt
+- `{REPO_URL}/research/self-healing-architecture.md` — full 3-level self-healing architecture
+- `{REPO_URL}/memory/worker-errors.log` — source of error/crash data
+- `{REPO_URL}/memory/worker-activity.log` — dispatcher_start records for the dispatcher_gap metric
+- `{REPO_URL}/agents/heartbeat/strategist-prompt.md` — caller prompt

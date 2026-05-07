@@ -3,7 +3,7 @@
 **Updated:** YYYY-MM-DD
 **Purpose:** Human-readable reference for AgentOS automatic recovery.
 **System:** 3-tier self-healing (DETECT → DIAGNOSE → FIX).
-**Architecture:** see `<REPO_ROOT>/ARCHITECTURE.md`
+**Architecture:** see `{INSTALL_ROOT}/ARCHITECTURE.md`
 
 ---
 
@@ -28,27 +28,27 @@
 
 **Symptoms:**
 - Worker logs `ECONNREFUSED` / `MCP tool not found` / `connection refused`
-- `launchctl list | grep <PROJECT_SLUG>` shows PID = "-" for the service (mac)
+- `launchctl list | grep {PROJECT_SLUG}` shows PID = "-" for the service (mac)
 - `systemctl --user status agent-os-*` shows `inactive`/`failed` (linux)
 
 **Services and ports:**
 
 | Service | Port | launchd label (mac) | systemd unit (linux) |
 |---------|------|---------------------|----------------------|
-| saga-mcp | 3851 | `com.<PROJECT_SLUG>.saga-mcp` | `agent-os-saga.service` |
-| telegram-mcp | 3848 | `com.<PROJECT_SLUG>.telegram-mcp` | `agent-os-telegram.service` |
-| claude-peers | 7899 | `com.<PROJECT_SLUG>.claude-peers-broker` | `agent-os-claude-peers.service` |
+| saga-mcp | 3851 | `com.{PROJECT_SLUG}.saga-mcp` | `agent-os-saga.service` |
+| telegram-mcp | 3848 | `com.{PROJECT_SLUG}.telegram-mcp` | `agent-os-telegram.service` |
+| claude-peers | 7899 | `com.{PROJECT_SLUG}.claude-peers-broker` | `agent-os-claude-peers.service` |
 
 **Procedure (mac):**
 
 ```bash
 # 1. Check status
-launchctl list | grep <PROJECT_SLUG>
+launchctl list | grep {PROJECT_SLUG}
 
 # 2. Identify the failed service (PID = "-" or ExitCode != 0)
 # 3. Kickstart
 USER_ID=$(id -u)
-LABEL="com.<PROJECT_SLUG>.saga-mcp"  # replace with actual service
+LABEL="com.{PROJECT_SLUG}.saga-mcp"  # replace with actual service
 launchctl kickstart -k "gui/${USER_ID}/${LABEL}"
 
 # 4. Wait 5s, verify
@@ -79,7 +79,7 @@ echo "$(date) | RB-001 | ${UNIT} | restart: OK/FAILED" >> logs/health/autofix.lo
 
 **On failure:** create a saga task in the `Infra` epic flagged `ESCALATE`, notify the operator.
 
-**Full runbook:** `<REPO_ROOT>/agents/heartbeat/skills/self-heal-autofix.md` → RB-001
+**Full runbook:** `{INSTALL_ROOT}/agents/heartbeat/skills/self-heal-autofix.md` → RB-001
 
 ---
 
@@ -106,7 +106,7 @@ echo "$(date) | RB-001 | ${UNIT} | restart: OK/FAILED" >> logs/health/autofix.lo
 - Description starts with "Continuation of task #X after MAX_ITERATIONS"
 - Include "Already done:" extracted from output.log
 
-**Full runbook:** `<REPO_ROOT>/agents/heartbeat/skills/self-heal-autofix.md` → RB-002
+**Full runbook:** `{INSTALL_ROOT}/agents/heartbeat/skills/self-heal-autofix.md` → RB-002
 
 ---
 
@@ -145,7 +145,7 @@ echo "$(date) | RB-003 | task_N | orphan reset to todo" >> logs/health/autofix.l
 
 ```bash
 USER_ID=$(id -u)
-launchctl kickstart -k "gui/${USER_ID}/com.<PROJECT_SLUG>.heartbeat-dispatcher"
+launchctl kickstart -k "gui/${USER_ID}/com.{PROJECT_SLUG}.heartbeat-dispatcher"
 launchctl list | grep heartbeat-dispatcher
 
 echo "$(date) | RB-004 | dispatcher | kickstart" >> logs/health/autofix.log
@@ -265,6 +265,6 @@ Tier 4 (direct):     Message the user with full context
 
 ## Related files
 
-- `<REPO_ROOT>/agents/heartbeat/skills/self-heal-autofix.md` — L3 autofix skill
-- `<REPO_ROOT>/agents/heartbeat/skills/self-heal-diagnose.md` — L2 diagnosis
-- `<REPO_ROOT>/agents/heartbeat/skills/strategist/health-watchdog.md` — L1 detection
+- `{INSTALL_ROOT}/agents/heartbeat/skills/self-heal-autofix.md` — L3 autofix skill
+- `{INSTALL_ROOT}/agents/heartbeat/skills/self-heal-diagnose.md` — L2 diagnosis
+- `{INSTALL_ROOT}/agents/heartbeat/skills/strategist/health-watchdog.md` — L1 detection

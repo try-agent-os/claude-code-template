@@ -70,8 +70,8 @@ grep -i "zombie\|timeout\|killed\|timed out\|hung" $LOGFILE
 ### Step 4: Probe infrastructure (if diagnosis_type = unknown)
 
 ```bash
-# launchd service status (substitute your <PROJECT_SLUG>)
-launchctl list | grep <PROJECT_SLUG> | awk '{print $3, $1}'
+# launchd service status (substitute your {PROJECT_SLUG})
+launchctl list | grep {PROJECT_SLUG} | awk '{print $3, $1}'
 
 # MCP server health (ports are deployment-specific)
 curl -s --max-time 3 http://localhost:3848/health 2>&1  # telegram-mcp
@@ -120,7 +120,7 @@ curl -s --max-time 3 http://127.0.0.1:7899/health 2>&1  # claude-peers
   "infrastructure_healthy": false,
   "auto_fixable": true,
   "escalation_level": 1,
-  "recommended_action": "RB-001: launchctl kickstart com.<PROJECT_SLUG>.saga-mcp"
+  "recommended_action": "RB-001: launchctl kickstart com.{PROJECT_SLUG}.saga-mcp"
 }
 ```
 
@@ -162,4 +162,4 @@ After calling the skill:
 
 - `health-watchdog` — calls this skill on anomaly detection
 - `self-heal-autofix` — next step: runs the autofix based on diagnosis_type
-- `<REPO_URL>/research/self-healing-architecture.md` — full architecture (if you keep architecture docs)
+- `{REPO_URL}/research/self-healing-architecture.md` — full architecture (if you keep architecture docs)
