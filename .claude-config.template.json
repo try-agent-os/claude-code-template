@@ -1,0 +1,9 @@
+{
+  "$comment": "Per-agent user-scope ~/.claude.json — claude-peers and telegram are loaded via plugin discovery (enabledPlugins in managed-settings.json), so no MCP entry is needed for them here. Only saga-mcp remains as an SSE MCP server (separate broker, not yet plugin-ised).",
+  "mcpServers": {
+    "saga-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3851/sse"
+    }
+  }
+}

@@ -1,8 +1,10 @@
 [Unit]
 Description=AgentOS operator (Claude Code in tmux, channel-pushed)
 Documentation=https://github.com/try-agent-os/claude-code-template
-After=network-online.target agent-os-claude-peers.service agent-os-telegram.service
-Wants=network-online.target agent-os-claude-peers.service agent-os-telegram.service
+# claude-peers + telegram are now stdio MCP plugins spawned per session by
+# Claude Code itself — no upstream systemd unit dependency.
+After=network-online.target agent-os-saga.service
+Wants=network-online.target agent-os-saga.service
 
 [Service]
 Type=forking
@@ -12,7 +14,8 @@ WorkingDirectory={INSTALL_ROOT}/claude/agents/operator
 EnvironmentFile={ENV_FILE}
 Environment=HOME={AGENT_HOME}
 Environment=TERM=screen-256color
-Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR}
+Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR_OPERATOR}
+Environment=DISABLE_AUTOUPDATER=1
 ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
   'claude --dangerously-skip-permissions \
     --add-dir {INSTALL_ROOT}/claude/memory \
@@ -27,7 +30,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {AGENT_HOME}/.claude {AGENT_HOME}/.config
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {CLAUDE_CONFIG_DIR_OPERATOR} {AGENT_HOME}/.config
 
 # Logging
 StandardOutput=append:{LOG_DIR}/operator.log

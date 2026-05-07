@@ -12,12 +12,17 @@ The macOS counterparts live in [`../launchd/`](../launchd/).
 
 | Unit | Type | Purpose | Restart |
 |------|------|---------|---------|
-| `agent-os-claude-peers.service` | `simple` | Long-running peer messaging broker (`bun broker.ts`) on `127.0.0.1:7899`. | `always`, `RestartSec=5` |
 | `agent-os-saga.service` | `simple` | Long-running task tracker MCP (`node dist/index.js`) on `127.0.0.1:3851`. | `always`, `RestartSec=5` |
-| `agent-os-telegram.service` | `simple` | Long-running Telegram bot + MCP stdio (`node dist/index.js`) on `127.0.0.1:3848`. | `on-failure`, `RestartSec=30` |
 | `agent-os-operator.service` | `forking` | Wraps `tmux new-session -d -s operator … claude …` so Claude Code stays alive in a detached tmux session. | `on-failure`, `RestartSec=30` |
 | `agent-os-dispatcher.service` | `oneshot` | Heartbeat dispatcher — runs `dispatcher.sh` to completion, then exits. Triggered by `agent-os-dispatcher.timer`. | n/a |
 | `agent-os-dispatcher.timer` | timer | Fires `agent-os-dispatcher.service` periodically. `OnBootSec=2min`, `OnUnitActiveSec={DISPATCHER_INTERVAL_SEC}sec`. | n/a |
+
+**Removed in T06-amend (plugin migration):**
+- `agent-os-claude-peers.service` — claude-peers is now a stdio MCP plugin
+  (`plugins/claude-peers`); broker daemon is auto-bootstrapped from
+  `server.ts` on first plugin spawn.
+- `agent-os-telegram.service` — telegram is now a stdio MCP plugin
+  (`plugins/telegram`), spawned per session by Claude Code itself.
 
 ---
 
@@ -68,9 +73,7 @@ sudo systemctl daemon-reload
 
 # 3. Enable + start
 sudo systemctl enable --now \
-  agent-os-claude-peers.service \
   agent-os-saga.service \
-  agent-os-telegram.service \
   agent-os-operator.service \
   agent-os-dispatcher.timer
 ```
@@ -125,9 +128,10 @@ Per-directive notes:
 - **`After=network-online.target` / `Wants=network-online.target`** —
   long-running units that need outbound HTTPS (Claude API, Telegram API) wait
   for the network to be fully online, not just the link.
-- **`After=agent-os-claude-peers.service agent-os-saga.service`** on the
-  dispatcher — workers need both MCPs alive before firing, otherwise
-  `mcp__saga-mcp__*` and `mcp__claude-peers__*` calls fail.
+- **`After=agent-os-saga.service`** on the dispatcher — workers need
+  saga-mcp alive before firing, otherwise `mcp__saga-mcp__*` calls fail.
+  claude-peers needs no `After=` since it is a stdio MCP plugin spawned
+  in-process by Claude Code itself.
 
 ### Why `ProtectHome=read-only` instead of `tmpfs`
 
@@ -191,15 +195,15 @@ After install, `scripts/verify.sh` (T07) runs the full health-check matrix.
 For ad-hoc inspection:
 
 ```bash
-# All five units active?
-systemctl is-active agent-os-claude-peers agent-os-saga agent-os-telegram \
-                    agent-os-operator agent-os-dispatcher.timer
+# All units active?
+systemctl is-active agent-os-saga agent-os-operator agent-os-dispatcher.timer
 
 # Next dispatcher run?
 systemctl list-timers agent-os-dispatcher.timer --no-pager
 
 # HTTP endpoints up?
-curl -sf http://127.0.0.1:7899/health   # claude-peers
-curl -sf http://127.0.0.1:3848/health   # telegram-mcp
 curl -sf http://127.0.0.1:3851/health   # saga-mcp
+# (claude-peers broker comes up only when first plugin session spawns —
+#  it has no dedicated unit; check via `curl http://127.0.0.1:7899/health`
+#  after operator starts.)
 ```

@@ -1,9 +1,11 @@
 [Unit]
 Description=AgentOS heartbeat dispatcher (one-shot, fired by .timer)
 Documentation=https://github.com/try-agent-os/claude-code-template
-After=network-online.target agent-os-claude-peers.service agent-os-saga.service
+# claude-peers is now a stdio MCP plugin spawned per session by Claude Code
+# itself — no upstream systemd unit dependency.
+After=network-online.target agent-os-saga.service
 Wants=network-online.target
-Requires=agent-os-claude-peers.service agent-os-saga.service
+Requires=agent-os-saga.service
 
 [Service]
 Type=oneshot
@@ -13,7 +15,8 @@ WorkingDirectory={INSTALL_ROOT}/claude/agents/heartbeat
 EnvironmentFile={ENV_FILE}
 Environment=HOME={AGENT_HOME}
 Environment=MCP_CONNECTION_NONBLOCKING=true
-Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR}
+Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR_DISPATCHER}
+Environment=DISABLE_AUTOUPDATER=1
 ExecStart=/bin/bash {INSTALL_ROOT}/claude/agents/heartbeat/dispatcher.sh
 TimeoutStartSec=20min
 Nice=10
@@ -23,7 +26,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {AGENT_HOME}/.claude {AGENT_HOME}/.config
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {CLAUDE_CONFIG_DIR_DISPATCHER} {CLAUDE_CONFIG_DIR_HEARTBEAT} {AGENT_HOME}/.config
 
 # Logging
 StandardOutput=append:{LOG_DIR}/dispatcher.log
