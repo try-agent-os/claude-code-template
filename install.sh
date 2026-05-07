@@ -41,6 +41,56 @@
 set -euo pipefail
 
 ###############################################################################
+# Bootstrap — make `curl … | bash` interactive
+#
+# When piped, stdin is the script body (not the user's terminal), so any
+# `read` inside the wizard would read script bytes as answers. Solution:
+# detect the pipe, re-download the script to a temp file, and re-exec with
+# stdin attached to /dev/tty. After this block we ALWAYS have:
+#   - $0 / BASH_SOURCE pointing at a real on-disk file
+#   - stdin = controlling terminal (for `read` prompts)
+#   - argv preserved (--minimal, --with=…, --reset, etc.)
+#
+# Skipped when:
+#   - already a tty (`-t 0`)              — direct `bash install.sh` invocation
+#   - already re-exec'd (env guard)       — second pass after the exec below
+#   - no terminal at all (no -t 1, -t 2)  — CI / headless; user must use env vars
+#                                            and pass --non-interactive (we then
+#                                            keep the original /dev/tty fallback
+#                                            at the bottom and let read fail
+#                                            loudly if it tries to prompt)
+###############################################################################
+readonly _BOOTSTRAP_URL="https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh"
+
+if [ "${_AGENTOS_REEXEC:-0}" != "1" ] && [ ! -t 0 ] && { [ -t 1 ] || [ -t 2 ]; }; then
+  _bs_tmp=$(mktemp -d -t agentos-installer-XXXXXX 2>/dev/null) || {
+    printf '\033[1;33m[install]\033[0m mktemp failed; falling back to /dev/tty redirect.\n' >&2
+    _bs_tmp=""
+  }
+  if [ -n "$_bs_tmp" ]; then
+    _bs_saved="$_bs_tmp/install.sh"
+    if command -v curl >/dev/null 2>&1 && \
+       curl -fsSL --max-time 30 "$_BOOTSTRAP_URL" -o "$_bs_saved" 2>/dev/null && \
+       [ -s "$_bs_saved" ]; then
+      chmod +x "$_bs_saved"
+      printf '\033[1;32m[install]\033[0m Re-execing from %s with stdin attached to terminal…\n' "$_bs_saved" >&2
+      # Cleanup tmp on exit of the re-exec'd process
+      export _AGENTOS_BOOTSTRAP_TMP="$_bs_tmp"
+      _AGENTOS_REEXEC=1 exec bash "$_bs_saved" "$@" </dev/tty
+    else
+      printf '\033[1;33m[install]\033[0m Re-fetch from %s failed.\n' "$_BOOTSTRAP_URL" >&2
+      printf '\033[1;33m[install]\033[0m Falling back to /dev/tty redirect (less robust).\n' >&2
+      rm -rf "$_bs_tmp"
+    fi
+  fi
+fi
+
+# Cleanup the bootstrap tmp dir if we re-exec'd from one.
+if [ -n "${_AGENTOS_BOOTSTRAP_TMP:-}" ]; then
+  trap 'rm -rf "${_AGENTOS_BOOTSTRAP_TMP:-}"' EXIT
+fi
+
+###############################################################################
 # Constants
 ###############################################################################
 readonly AGENT_USER="agent-os"
@@ -1025,11 +1075,21 @@ if [ "$(uname)" = "Darwin" ] && [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 
-# When invoked via `curl ... | bash`, stdin is the pipe (script body), not the
-# terminal. Reroute stdin to /dev/tty so interactive `read` prompts wait for
-# the user. Tolerate failure (headless / no controlling terminal).
+# Fallback /dev/tty redirect — only reached if the bootstrap re-exec at the
+# top of the script could not run (curl missing, network down, mktemp failed,
+# or no terminal at all). If we're piped AND have a terminal, redirect.
+# If we're piped AND have NO terminal, fail loudly rather than silently
+# consuming script bytes as user input — unless --non-interactive was set.
 if [ ! -t 0 ]; then
-  exec </dev/tty 2>/dev/null || true
+  if [ -t 1 ] || [ -t 2 ]; then
+    if ! exec </dev/tty 2>/dev/null; then
+      warn "Could not open /dev/tty for interactive prompts."
+      [[ "${NON_INTERACTIVE:-0}" == "1" ]] || \
+        fail "stdin is a pipe and /dev/tty is unavailable. Either use --non-interactive with all wizard env vars preset, or run the installer from a real terminal."
+    fi
+  elif [[ "${NON_INTERACTIVE:-0}" != "1" ]]; then
+    fail "Non-interactive environment detected (no terminal on stdin/stdout/stderr). Re-run with --non-interactive and preset all wizard env vars (PROJECT_NAME, PROJECT_SLUG, TG_BOT_TOKEN, TG_USER_ID, TIMEZONE, CLAUDE_CODE_OAUTH_TOKEN)."
+  fi
 fi
 
 MODE=$(detect_mode)
