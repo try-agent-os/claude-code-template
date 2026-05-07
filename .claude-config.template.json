@@ -1,5 +1,21 @@
 {
-  "$comment": "Per-agent user-scope ~/.claude.json — claude-peers and telegram are loaded via plugin discovery (enabledPlugins in managed-settings.json), so no MCP entry is needed for them here. Only saga-mcp remains as an SSE MCP server (separate broker, not yet plugin-ised).",
+  "$comment": "Per-agent user-scope ~/.claude.json. claude-peers + telegram are loaded via plugin discovery (enabledPlugins in managed-settings.json), so no MCP entry is needed for them here. Only saga-mcp remains as an SSE MCP server (separate broker, not yet plugin-ised). The hasCompletedOnboarding / bypassPermissionsModeAccepted / hasTrustDialogAccepted flags pre-acknowledge claude-code's first-run TUI dialogs so the agent can boot headless under systemd. Without them claude shows theme picker → workspace trust → bypass-permissions warning and exits 1 when no TTY input arrives.",
+
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true,
+  "hasInitialThemeSetup": true,
+  "hasCompletedAuthSetup": true,
+  "theme": "dark-daltonized",
+
+  "projects": {
+    "${INSTALL_ROOT}/claude": {"hasTrustDialogAccepted": true},
+    "${INSTALL_ROOT}/claude/agents": {"hasTrustDialogAccepted": true},
+    "${INSTALL_ROOT}/claude/agents/operator": {"hasTrustDialogAccepted": true},
+    "${INSTALL_ROOT}/claude/agents/dispatcher": {"hasTrustDialogAccepted": true},
+    "${INSTALL_ROOT}/claude/agents/heartbeat": {"hasTrustDialogAccepted": true},
+    "${INSTALL_ROOT}/claude/memory": {"hasTrustDialogAccepted": true}
+  },
+
   "mcpServers": {
     "saga-mcp": {
       "type": "sse",
