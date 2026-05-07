@@ -163,7 +163,7 @@ c_reset=$'\033[0m'
 
 log()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn()   { printf '%s⚠%s %s\n' "$c_yellow" "$c_reset" "$*" >&2; }
-fail()   { printf '%s✗%s %s\n' "$c_red" "$c_reset" "$*" >&2; exit 1; }
+fail()   { printf '%s✗%s %s\n' "$c_red" "$c_reset" "$*" >&2; _try_autoresolve "$*" 1 || true; exit 1; }
 info()   { printf '%s%s%s\n' "$c_blue" "$*" "$c_reset"; }
 ok()     { printf '%s✓%s %s\n' "$c_green" "$c_reset" "$*"; }
 section() { printf '\n%s═══ %s ═══%s\n' "$c_bold" "$*" "$c_reset"; }
@@ -174,10 +174,121 @@ header()  { printf '\n%s┌─ %s%s\n' "$c_bold" "$*" "$c_reset"; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
+# Save original argv so the autoresolve hook can re-exec the script with the
+# same flags after Claude fixes whatever broke.
+_ORIGINAL_ARGV=("$@")
+
+# Auto-resolve hook: when a step fails, dispatch Claude (if installed +
+# authenticated) to diagnose and fix in-place, then re-exec. Skipped when:
+#   - AGENTOS_AUTORESOLVE=0 (user disabled)
+#   - claude not yet installed (steps 1–4 on a fresh VPS — autoresolve only
+#     becomes active from step 5+ on Linux; on Mac wizard side, claude is
+#     usually present and AUTORESOLVE works for any remote-side failure
+#     that bubbles up to local fail())
+#   - already inside an autoresolve attempt (no recursion)
+#   - state file says we already exhausted AGENTOS_AUTORESOLVE_MAX attempts
+# Toggle off for CI / debugging via: AGENTOS_AUTORESOLVE=0 install.sh …
+_try_autoresolve() {
+  local fail_msg="$1" exit_code="${2:-1}"
+  [[ "${AGENTOS_AUTORESOLVE:-1}" = "1" ]] || return 1
+  [[ "${_AGENTOS_AUTORESOLVING:-0}" = "0" ]] || return 1
+  command -v claude >/dev/null 2>&1 || return 1
+  [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] || return 1
+
+  local max="${AGENTOS_AUTORESOLVE_MAX:-2}" attempts=0
+  if declare -F state_get >/dev/null 2>&1 && [[ -f "${STATE_FILE:-}" ]]; then
+    attempts=$(state_get "autoresolve_attempts" "0" 2>/dev/null || echo 0)
+  fi
+  if [[ "$attempts" -ge "$max" ]]; then
+    warn "Auto-resolve exhausted ($attempts/$max attempts already used)."
+    return 1
+  fi
+  if declare -F state_set >/dev/null 2>&1; then
+    state_set "autoresolve_attempts" "$((attempts + 1))" 2>/dev/null || true
+  fi
+
+  warn "Auto-resolve $((attempts + 1))/$max: dispatching Claude for diagnosis…"
+
+  local ctx; ctx=$(mktemp -t agentos-autoresolve-ctx.XXXXXX)
+  {
+    printf '## Failed step\n%s\n\n' "${CURRENT_STEP:-unknown}"
+    printf '## Failure message\n%s\n\n' "$fail_msg"
+    printf '## Exit code\n%s\n\n' "$exit_code"
+    printf '## Last 80 lines of dispatcher.log (if any)\n'
+    tail -80 /var/log/agent-os/install.log 2>/dev/null || echo "(no log)"
+    printf '\n## OS\n'
+    [ -r /etc/os-release ] && cat /etc/os-release || echo "(macOS or unknown)"
+    printf '\n## Disk\n'
+    df -h / 2>/dev/null
+    printf '\n## apt sources.list.d\n'
+    ls -la /etc/apt/sources.list.d/ 2>/dev/null || echo "(no apt)"
+    printf '\n## Install state\n'
+    [ -f "${STATE_FILE:-}" ] && jq . "$STATE_FILE" 2>/dev/null || echo "(no state)"
+  } > "$ctx"
+
+  local prompt="AgentOS install.sh failed at step '${CURRENT_STEP:-unknown}'.
+
+Diagnose the root cause and apply a targeted fix. Then exit — the installer will re-execute and re-attempt the failed step.
+
+You have root on this Linux VPS. Failure context is at $ctx (read it).
+
+Constraints:
+  - DO NOT modify install.sh itself; the script will be re-executed.
+  - DO NOT run destructive operations (rm -rf /, mkfs, dropping databases) unless absolutely necessary and you've verified the impact.
+  - Stay within the scope of '${CURRENT_STEP:-unknown}'; don't install completely different stacks.
+  - When done, write a single line to /tmp/agentos-autoresolve-result with format:
+        fixed: <brief description of what you changed>
+    OR
+        unresolvable: <one-line reason>
+
+Available --add-dir paths: the failure context, /etc/agent-os, /var/log/agent-os, $INSTALL_ROOT/claude (if exists)."
+
+  rm -f /tmp/agentos-autoresolve-result
+
+  local addargs=("--add-dir" "$ctx")
+  [ -d /etc/agent-os ]      && addargs+=("--add-dir" /etc/agent-os)
+  [ -d /var/log/agent-os ]  && addargs+=("--add-dir" /var/log/agent-os)
+  [ -d "${INSTALL_ROOT:-}/claude" ] && addargs+=("--add-dir" "${INSTALL_ROOT}/claude")
+
+  if ! _AGENTOS_AUTORESOLVING=1 claude \
+      --dangerously-skip-permissions \
+      "${addargs[@]}" \
+      -p "$prompt"; then
+    warn "Claude session itself errored; abandoning autoresolve."
+    rm -f "$ctx"
+    return 1
+  fi
+
+  rm -f "$ctx"
+
+  if [[ -f /tmp/agentos-autoresolve-result ]]; then
+    local result; result=$(head -1 /tmp/agentos-autoresolve-result)
+    case "$result" in
+      fixed:*)
+        ok "Auto-resolve: $result"
+        ok "Re-executing install.sh to retry the failed step…"
+        # State file preserves completed steps; autoresolve_attempts counter
+        # was incremented above so we won't loop forever.
+        exec bash "${BASH_SOURCE[0]}" "${_ORIGINAL_ARGV[@]}"
+        ;;
+      unresolvable:*)
+        warn "Auto-resolve gave up: $result"
+        ;;
+      *)
+        warn "Auto-resolve produced unexpected result: $result"
+        ;;
+    esac
+  else
+    warn "Auto-resolve session ended without writing /tmp/agentos-autoresolve-result"
+  fi
+  return 1
+}
+
 on_err() {
   local exit_code=$? line=$1
   printf '\n\033[1;31m[install] FAILED at step "%s" (line %s, exit %s)\033[0m\n' \
     "${CURRENT_STEP}" "${line}" "${exit_code}" >&2
+  _try_autoresolve "ERR trap at line $line" "$exit_code" || true
   printf '[install] Re-run the same command — install.sh is idempotent.\n' >&2
   exit "${exit_code}"
 }
