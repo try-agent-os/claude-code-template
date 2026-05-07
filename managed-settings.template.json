@@ -1,70 +1,22 @@
 {
-  "$comment": "AgentOS managed settings — installed to /etc/claude-code/managed-settings.json by install.sh. This file enforces org-wide policy on every claude-code invocation regardless of user-scope or project-scope settings.json. Schema validated against claude-code 2.1.119+: enabledPlugins / allowedChannelPlugins / strictKnownMarketplaces are RECORDS (objects keyed by name), not arrays. The empty-object value `{}` is a valid 'enable with no per-plugin overrides' marker; future config (per-plugin permissions, etc.) goes inside the value.",
+  "$comment": "AgentOS managed settings — installed to /etc/claude-code/managed-settings.json by install.sh. Schema validated against claude-code 2.1.119+. Note: the managed-settings allowlist is consulted but channels also gate on a separate built-in allowlist that we haven't fully reverse-engineered yet — see saga-mcp task #802 for the open issue.",
 
-  "autoUpdatesChannel": "stable",
   "channelsEnabled": true,
   "minimumVersion": "2.1.119",
 
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true
-  },
-
-  "forceLoginMethod": "claudeai",
-
-  "allowedChannelPlugins": {
-    "claude-peers@agentos": {},
-    "telegram@agentos": {}
-  },
+  "allowedChannelPlugins": [
+    {"plugin": "claude-peers", "marketplace": "agentos"},
+    {"plugin": "telegram", "marketplace": "agentos"}
+  ],
 
   "enabledPlugins": {
-    "claude-peers@agentos": {},
-    "telegram@agentos": {},
-    "agent-sdk-dev@anthropic": {},
-    "code-review@anthropic": {},
-    "commit-commands@anthropic": {},
-    "security-guidance@anthropic": {}
-  },
-
-  "permissions": {
-    "allow": [
-      "mcp__saga-mcp__*",
-      "mcp__claude-peers__*",
-      "mcp__telegram__*",
-      "Bash(systemctl status*)",
-      "Bash(systemctl is-active*)",
-      "Bash(journalctl*)",
-      "Bash(curl localhost:*)",
-      "Bash(curl 127.0.0.1:*)",
-      "Bash(curl http://localhost:*)",
-      "Bash(curl http://127.0.0.1:*)",
-      "Bash(jq:*)",
-      "Bash(git:*)",
-      "Bash(tmux:*)",
-      "Bash(ls:*)",
-      "Bash(cat:*)",
-      "Bash(echo:*)",
-      "Bash(grep:*)",
-      "Bash(find:*)",
-      "Bash(date:*)"
-    ],
-    "deny": [
-      "Bash(rm -rf /:*)",
-      "Bash(rm -rf /*)",
-      "Bash(mkfs*)",
-      "Bash(dd if=*)",
-      "Bash(sudo rm*)",
-      "Bash(sudo dd*)",
-      "Bash(sudo mkfs*)"
-    ]
-  },
-
-  "strictKnownMarketplaces": {
-    "./.claude-plugin/marketplace.json": {}
-  },
-
-  "env": {
-    "DISABLE_AUTOUPDATER": "1",
-    "MCP_CONNECTION_NONBLOCKING": "true"
+    "claude-peers@agentos": true,
+    "telegram@agentos": true,
+    "agentos-core@agentos": true,
+    "template-dev@agentos": true,
+    "agent-sdk-dev@agentos": true,
+    "code-review@agentos": true,
+    "commit-commands@agentos": true,
+    "security-guidance@agentos": true
   }
 }

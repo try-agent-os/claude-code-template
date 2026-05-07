@@ -1804,10 +1804,31 @@ render_user_claude_json() {
   chmod 0640 "$target"
 }
 
+# Per-agent settings.json (channelsEnabled, allowedChannelPlugins, enabledPlugins,
+# extraKnownMarketplaces, permissions). Different from .claude.json — settings.json
+# holds policy/feature toggles claude reads at startup; .claude.json holds user
+# state (theme, hasCompletedOnboarding, projects, oauthAccount cache, ...).
+SETTINGS_TPL="${TEMPLATE_DIR}/.claude-settings.template.json"
+render_user_settings_json() {
+  local dest=$1
+  local target="${dest}/settings.json"
+  if [[ -f "$SETTINGS_TPL" ]]; then
+    sed \
+      -e "s|\${INSTALL_ROOT}|${INSTALL_ROOT}|g" \
+      -e "s|\${STATE_DIR}|${STATE_DIR}|g" \
+      "$SETTINGS_TPL" > "$target"
+    chown "$AGENT_USER:$AGENT_USER" "$target"
+    chmod 0640 "$target"
+  fi
+}
+
 render_user_claude_json "$CC_DIR_OPERATOR"
 render_user_claude_json "$CC_DIR_DISPATCHER"
 render_user_claude_json "$CC_DIR_HEARTBEAT"
-log "  per-agent ~/.claude.json (saga-mcp SSE only; claude-peers + telegram via plugin discovery) rendered for operator/dispatcher/heartbeat"
+render_user_settings_json "$CC_DIR_OPERATOR"
+render_user_settings_json "$CC_DIR_DISPATCHER"
+render_user_settings_json "$CC_DIR_HEARTBEAT"
+log "  per-agent ~/.claude.json + settings.json rendered for operator/dispatcher/heartbeat"
 mark_step_completed 12
 
 ###############################################################################
