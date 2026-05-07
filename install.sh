@@ -591,8 +591,8 @@ exec_remote_setup_wizard() {
   fi
   ok "ssh / rsync / git / curl / jq present"
 
-  # Internet
-  if ! curl -fsS --max-time 5 https://api.anthropic.com/v1/models &>/dev/null; then
+  # Internet — HEAD-only check (avoids -f failing on 401 from authenticated endpoints).
+  if ! curl -sI --max-time 5 https://api.anthropic.com/ -o /dev/null 2>&1; then
     warn "Cannot reach api.anthropic.com — Claude Code won't auth on remote either."
   else
     ok "Internet connectivity"
@@ -909,6 +909,13 @@ if [ "$(uname)" = "Darwin" ] && [ "$(id -u)" -eq 0 ]; then
   printf '\n' >&2
   printf '  (sudo is only used when running install.sh on the Linux VPS itself.)\n' >&2
   exit 1
+fi
+
+# When invoked via `curl ... | bash`, stdin is the pipe (script body), not the
+# terminal. Reroute stdin to /dev/tty so interactive `read` prompts wait for
+# the user. Skip if there's no controlling tty (e.g., real headless CI).
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+  exec </dev/tty
 fi
 
 MODE=$(detect_mode)
