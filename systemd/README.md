@@ -36,6 +36,7 @@ unit files into `/etc/systemd/system/`:
 | `{ENV_FILE}` | `/etc/agent-os/agent-os.env` | Single source of secrets. Mode `0640`, owner `root:agent-os`. |
 | `{BUN_PATH}` | `/home/agent-os/.bun/bin/bun` | Absolute path to `bun` (only `claude-peers-mcp` needs it). |
 | `{DISPATCHER_INTERVAL_SEC}` | `2700` | Seconds between dispatcher firings (45 min default). |
+| `{CLAUDE_CONFIG_DIR}` | `/var/lib/agent-os/claude-config/<role>/` | Per-agent config dir (typically `/var/lib/agent-os/claude-config/<role>/`), prevents race on shared `~/.claude.json` files. |
 
 ---
 

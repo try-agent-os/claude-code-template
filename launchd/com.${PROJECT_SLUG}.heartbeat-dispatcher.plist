@@ -28,6 +28,8 @@
 		<string>${AGENT_HOME}/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>MCP_CONNECTION_NONBLOCKING</key>
 		<string>true</string>
+		<key>CLAUDE_CONFIG_DIR</key>
+		<string>${CLAUDE_CONFIG_DIR}</string>
 	</dict>
 </dict>
 </plist>

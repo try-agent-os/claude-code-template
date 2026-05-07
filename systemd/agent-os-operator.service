@@ -12,6 +12,7 @@ WorkingDirectory={INSTALL_ROOT}/claude/agents/operator
 EnvironmentFile={ENV_FILE}
 Environment=HOME={AGENT_HOME}
 Environment=TERM=screen-256color
+Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR}
 ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
   'claude --dangerously-skip-permissions \
     --add-dir {INSTALL_ROOT}/claude/memory \

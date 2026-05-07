@@ -13,6 +13,7 @@ WorkingDirectory={INSTALL_ROOT}/claude/agents/heartbeat
 EnvironmentFile={ENV_FILE}
 Environment=HOME={AGENT_HOME}
 Environment=MCP_CONNECTION_NONBLOCKING=true
+Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR}
 ExecStart=/bin/bash {INSTALL_ROOT}/claude/agents/heartbeat/dispatcher.sh
 TimeoutStartSec=20min
 Nice=10
