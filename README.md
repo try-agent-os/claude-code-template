@@ -8,21 +8,40 @@
 
 ## Install (one command)
 
+The same `curl` one-liner works on **macOS** and **Linux** — `install.sh` detects the OS and picks the right path:
+
+- **macOS** → launches a guided remote-setup wizard that picks (or provisions) a Linux VPS, configures Telegram + Claude Code OAuth, and runs `install.sh` non-interactively on the remote.
+- **Linux as root** → runs the local 18-step install in place (the canonical AgentOS host).
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash
 ```
 
-Prefer to read the script before running as root? Same result, two steps:
+On Linux you'll need `sudo` (the script aborts and re-asks if you forget); on macOS no root is needed locally — the wizard `ssh`'s into the VPS and runs `sudo` there.
+
+Prefer to read the script before running it? Same result, two steps:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh -o install.sh
 less install.sh        # inspect
-sudo bash install.sh   # run when satisfied
+bash install.sh        # macOS — wizard
+sudo bash install.sh   # Linux — local install
 ```
 
-The installer is **idempotent and resumable** — re-run it any time. State lives in `/etc/agent-os/install.state.json`. Use `--reset` to re-prompt the wizard, `--force-reinstall` to re-execute every step.
+The installer is **idempotent and resumable** on both paths — re-run it any time. On Linux, state lives in `/etc/agent-os/install.state.json`. On macOS, the wizard's per-host state lives in `~/.agent-os-deploy/state.json` and a deploy log is written under the same dir. Linux flags: `--reset` to re-prompt the wizard, `--force-reinstall` to re-execute every step.
 
-> **Currently Linux only.** The installer requires Ubuntu 22.04+ or Debian 12+. macOS launchd plists exist under [`launchd/`](./launchd/) but are not yet wired into `install.sh` — Mac users must lay them down manually. See [Requirements](#requirements).
+### How it works on Mac
+
+When `install.sh` detects Darwin, it runs `exec_remote_setup_wizard` instead of the local install. High-level flow:
+
+1. **Pre-flight checks** — verifies `ssh`, `rsync`, `git`, `curl`, `jq`, `claude` CLI, internet to `api.anthropic.com`, writable `~/.ssh/config`, and an SSH key (offers to `ssh-keygen` an `ed25519` if missing). Missing CLIs are flagged with the matching `brew install` line.
+2. **Cost screen** — prints the recurring VPS cost range (Hetzner ~$8/mo → DigitalOcean $48/mo) before any provisioning runs.
+3. **Pick host** — choose an existing SSH alias from `~/.ssh/config`, or provision a new VPS via `doctl` / `hcloud` / `linode-cli`. Provider CLIs are auto-installed via Homebrew on demand.
+4. **Telegram BotFather hand-holding** — guides you through `/newbot`, validates the token format, then polls `getUpdates` so every admin who sends `/start` is auto-detected (multi-admin allowlist).
+5. **OAuth setup-token auto-launch** — if `claude` is on your Mac, the wizard runs `claude setup-token` (in a fresh Terminal window via `osascript`) and prompts you to paste the resulting `sk-ant-oat01-...` back.
+6. **Remote install** — `git clone` the template into `/tmp/agentos` on the VPS, then `ssh ... sudo -E bash install.sh --non-interactive` with all wizard answers forwarded as env vars. Output is tee'd to `~/.agent-os-deploy/<alias>.log`.
+7. **Self-test** — sends a Telegram message via the bot, waits up to 60s for the operator to register on the peers broker, optionally invokes `scripts/verify.sh` on the remote.
+8. **Final summary** — prints how to attach to the operator tmux, where logs and state live, and how to re-run the wizard.
 
 ---
 
@@ -86,6 +105,26 @@ The template ships an empty `agents/{operator,dispatcher}/CLAUDE.md` skeleton. A
 
 ## Requirements
 
+AgentOS runs on a **Linux VPS** end-to-end. There are two supported launch points for `install.sh`:
+
+### macOS launcher (10.15+ recommended)
+
+Runs the remote-setup wizard, which provisions and configures the VPS for you.
+
+| Item | Required |
+|------|----------|
+| OS | macOS 10.15 (Catalina) or newer. amd64 (Intel) or arm64 (Apple Silicon). |
+| Privilege | None locally. The wizard `ssh`s as `root` into the VPS and runs `sudo` there. |
+| Local CLIs | `ssh`, `rsync`, `git`, `curl`, `jq`. The pre-flight check fails fast and tells you `brew install …` for any missing tool. |
+| Optional CLIs | `doctl` / `hcloud` / `linode-cli` if you want to provision a new VPS through the wizard — auto-installed via Homebrew on demand. Skip if you point at an existing SSH alias. |
+| `claude` CLI | Recommended — the wizard auto-launches `claude setup-token` for you. Without it, you can paste a pre-generated token. |
+| SSH key | `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`. The wizard offers to `ssh-keygen` an ed25519 key if neither exists. |
+| Network | Outbound HTTPS to `api.anthropic.com` and your VPS provider API. |
+
+### Linux VPS (target host)
+
+The actual AgentOS runtime — same requirements whether you reach it via the Mac wizard or run `install.sh` on it directly.
+
 | Item | Required |
 |------|----------|
 | OS | Ubuntu 22.04 / 24.04, Debian 12+. amd64 or arm64. |
@@ -94,9 +133,9 @@ The template ships an empty `agents/{operator,dispatcher}/CLAUDE.md` skeleton. A
 | Disk | ~3 GB for default install (Whisper medium model is 1.5 GB on its own; pick `--whisper=tiny` to drop it to ~1 GB total). |
 | Network | Outbound HTTPS to `api.anthropic.com`, `downloads.claude.ai`, `github.com`, NPM/Bun registries, Telegram Bot API. |
 | Anthropic auth | A valid `CLAUDE_CODE_OAUTH_TOKEN` (recommended — Pro/Max/Team/Enterprise plan, generated on your workstation with `claude setup-token`) **or** `ANTHROPIC_API_KEY` (Console-billed pay-per-token). |
-| Telegram (optional) | A bot token from `@BotFather` and your numeric user ID from `@userinfobot`. Skip with `--minimal`. |
+| Telegram (optional) | A bot token from `@BotFather` and your numeric user ID — both auto-collected by the Mac wizard. Skip with `--minimal`. |
 
-macOS path: launchd plists exist under [`launchd/`](./launchd/) but `install.sh` does not currently render them. Manual setup is possible — see the unit files for the exact `ProgramArguments` and `EnvironmentVariables` shape.
+Bare-metal macOS hosting (running operator + dispatcher under launchd on the Mac itself) is not the supported topology. Plist templates exist under [`launchd/`](./launchd/) for parity / experimentation, but the canonical deployment puts the long-running services on Linux.
 
 ---
 
