@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "Stop",
+  "stop_hook_active": true,
+  "session_id": "test-session-014",
+  "transcript_path": "/tmp/test.jsonl",
+  "cwd": "/tmp",
+  "_test": {
+    "hook": "notify-stop",
+    "expected_exit": 0,
+    "comment": "Must exit 0 immediately when stop_hook_active=true to prevent infinite loop"
+  }
+}
