@@ -6,6 +6,17 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Added (T06-amend5: Mac UX polish)
+- Cost transparency screen at start of Mac wizard (VPS pricing per provider, Telegram/Claude/Whisper costs).
+- Pre-flight checks: ssh/rsync/git/curl/jq presence, internet, claude CLI, ~/.ssh/config writability, SSH key auto-generation.
+- Provider CLI auto-install via brew (`ensure_brew_cli` helper) with auth-init prompts for doctl/hcloud/linode-cli.
+- BotFather hand-holding box (step-by-step instructions) + bot token format validation regex.
+- Multi-admin auto-detection via `/start` polling (Telegram getUpdates), populates `TG_ADMIN_USER_IDS` + `TG_ADMIN_USERNAMES`.
+- Claude Code OAuth auto-launch via `osascript` opening Terminal with `claude setup-token`.
+- Remote bootstrap via `git clone` (replaces rsync) — pulls fresh template directly on remote.
+- Self-test: sends Telegram message via Bot API, polls operator peer registration up to 60s, optional verify.sh probe.
+- Per-deploy log file at `~/.agent-os-deploy/deploy-YYYYMMDD-HHMMSS.log`.
+
 ## 2026-05-07 — Wave 3: T01 + T07 + T11 + T12 merged
 
 - T01: full novostudio→template skeleton (~76 files, ~10K LOC, 11 commits).
