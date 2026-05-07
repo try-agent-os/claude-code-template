@@ -1289,7 +1289,32 @@ mark_step_completed 2
 step "3/18 apt prereqs"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+
+# Self-heal: prior install runs (or partial provisions) may have left broken
+# apt sources behind — most commonly the legacy Anthropic apt repo at
+# downloads.claude.ai/claude-code/apt that is now decommissioned (we now
+# install Claude Code via the bootstrap script in Step 5, see commit history).
+# Step 5 removes those artifacts itself, but Step 3 runs first, so a re-run
+# on a half-installed VPS would die here on `apt-get update` before reaching
+# the cleanup. Detect and self-heal: try update, parse failures, disable
+# the offending source files, retry once.
+_apt_log=$(mktemp)
+apt-get update -o Acquire::Retries=2 >"$_apt_log" 2>&1 || true
+if grep -qE 'does not have a Release file|Failed to fetch|Could not resolve' "$_apt_log"; then
+  warn "Detected broken apt source(s); attempting self-heal."
+  _broken_urls=$(grep -oE 'https?://[^[:space:]]+' "$_apt_log" | sort -u)
+  for _url in $_broken_urls; do
+    _base=${_url%/dists/*}
+    _base=${_base%/}
+    _matches=$(grep -lr -F "$_base" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true)
+    for _f in $_matches; do
+      mv "$_f" "${_f}.disabled-$(date +%s)" 2>/dev/null && \
+        ok "Disabled broken apt source: $_f (was pointing at $_base)"
+    done
+  done
+  apt-get update -qq || fail "apt-get update still failing after disabling broken sources. See $_apt_log for full output."
+fi
+rm -f "$_apt_log"
 
 apt-get install -y --no-install-recommends \
   curl ca-certificates gnupg git tmux jq sqlite3 \
