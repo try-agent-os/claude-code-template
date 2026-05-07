@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# AgentOS one-command installer for Ubuntu 22.04/24.04 + Debian 12+.
+# AgentOS one-command installer.
 #
-# Usage:
+# Two paths, dispatched by detect_mode (Darwin → remote-setup wizard, Linux
+# root → local-install of the 18-step canonical host).
+#
+# Usage on macOS (NO sudo — wizard runs as your user; sudoes only on the
+# remote VPS via ssh):
+#   curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash
+#
+# Usage on Linux VPS (Ubuntu 22.04/24.04 or Debian 12+, MUST be root):
 #   curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | sudo bash
 #   # OR
 #   git clone https://github.com/try-agent-os/claude-code-template /tmp/agentos-installer
@@ -75,7 +82,16 @@ RESET=0
 FORCE_REINSTALL=0
 
 # Where this script lives — used to find systemd templates etc.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# When the script is piped via `curl | bash`, BASH_SOURCE[0] is empty and stdin
+# is the script. The fallback chain handles all 3 cases (sourced, executed
+# directly, curl-piped). With `set -u` the `:-` defaults prevent unbound errors.
+_SELF="${BASH_SOURCE[0]:-${0:-/dev/stdin}}"
+if [ -f "$_SELF" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
+else
+  # curl | bash — no on-disk script. Mac branch will git-clone the template.
+  SCRIPT_DIR=""
+fi
 # The script may be run via `curl | bash` (no SCRIPT_DIR templates) — in that
 # case we'll clone the template into INSTALL_ROOT first and re-source from there.
 TEMPLATE_DIR="${SCRIPT_DIR}"
@@ -100,6 +116,11 @@ info()   { printf '%s%s%s\n' "$c_blue" "$*" "$c_reset"; }
 ok()     { printf '%s✓%s %s\n' "$c_green" "$c_reset" "$*"; }
 section() { printf '\n%s═══ %s ═══%s\n' "$c_bold" "$*" "$c_reset"; }
 header()  { printf '\n%s┌─ %s%s\n' "$c_bold" "$*" "$c_reset"; }
+
+# bash 3.2 (macOS system bash) has no ${var,,} / ${var^^} case-conversion.
+# Use these helpers instead.
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
 on_err() {
   local exit_code=$? line=$1
@@ -209,7 +230,7 @@ prompt_resume() {
     fi
     printf "Resume from previous state? [%sY%s/n]: " "$c_green" "$c_reset"
     read -r choice
-    if [[ "${choice,,}" == "n" || "${choice,,}" == "no" ]]; then
+    if [ "$(lower "$choice")" = "n" ] || [ "$(lower "$choice")" = "no" ]; then
       warn "Starting fresh."
       mv "$STATE_FILE" "$STATE_FILE.bak.$(date +%s)"
     else
@@ -399,7 +420,7 @@ ensure_brew_cli() {
     printf "  Install via brew? [%sY%s/n]: " "$c_green" "$c_reset"
     local b
     read -r b
-    if [[ "${b,,}" != "n" ]]; then
+    if [ "$(lower "$b")" != "n" ]; then
       brew install "$pkg" || fail "brew install $pkg failed"
       return 0
     else
@@ -551,7 +572,7 @@ exec_remote_setup_wizard() {
   printf "  Continue? [%sY%s/n]: " "$c_green" "$c_reset"
   local cont
   read -r cont
-  [[ "${cont,,}" != "n" ]] || exit 0
+  [ "$(lower "$cont")" != "n" ] || exit 0
 
   ###########################################################################
   # Pre-flight checks
@@ -584,7 +605,7 @@ exec_remote_setup_wizard() {
     printf "  Continue anyway? [y/%sN%s]: " "$c_yellow" "$c_reset"
     local ok_choice
     read -r ok_choice
-    [[ "${ok_choice,,}" == "y" ]] || exit 1
+    [ "$(lower "$ok_choice")" = "y" ] || exit 1
   else
     ok "Claude Code: $(claude --version 2>&1 | head -1)"
   fi
@@ -604,7 +625,7 @@ exec_remote_setup_wizard() {
     printf "  Generate ed25519 key now? [%sY%s/n]: " "$c_green" "$c_reset"
     local gen_choice
     read -r gen_choice
-    if [[ "${gen_choice,,}" != "n" ]]; then
+    if [ "$(lower "$gen_choice")" != "n" ]; then
       ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "agentos-deploy"
       ok "Generated ~/.ssh/id_ed25519"
       info "Add this to your provider account (DO/Hetzner/Linode):"
@@ -721,7 +742,7 @@ EOF
       printf "  Retry / skip / abort? [%sR%s/s/a]: " "$c_green" "$c_reset"
       local choice2
       read -r choice2
-      case "${choice2,,}" in
+      case "$(lower "$choice2")" in
         s) TG_ADMIN_USER_IDS=""; TG_ADMIN_USERNAMES=""; break ;;
         a) exit 0 ;;
         *) continue ;;
@@ -736,7 +757,7 @@ EOF
       printf "  Save these as bot admins? [%sY%s/n]: " "$c_green" "$c_reset"
       local ok_choice
       read -r ok_choice
-      [[ "${ok_choice,,}" != "n" ]] || exit 0
+      [ "$(lower "$ok_choice")" != "n" ] || exit 0
       break
     fi
   done
@@ -871,6 +892,25 @@ EOF
 # On macOS this calls exec_remote_setup_wizard and exits; the local-install
 # logic below is unreachable on Mac. Keep this dispatch the FIRST thing after
 # arg parsing — any Linux-only code added above will break the Mac branch.
+
+# Guard: on macOS the wizard runs as the user (touches ~/.ssh/config, runs
+# `claude setup-token` in the user's browser session, sudoes only on the
+# remote VPS via ssh). Running with sudo would resolve `~/.ssh/config` to
+# `/root/.ssh/config` and break the auth flow. Bail out with a clear hint.
+if [ "$(uname)" = "Darwin" ] && [ "$(id -u)" -eq 0 ]; then
+  printf '%s✗%s Do not run install.sh with sudo on macOS.\n' "$c_red" "$c_reset" >&2
+  printf '\n' >&2
+  printf '  The Mac wizard runs as your user — it manages ~/.ssh/config,\n' >&2
+  printf '  drives `claude setup-token` in your browser, and sudoes only on\n' >&2
+  printf '  the remote Linux VPS over ssh.\n' >&2
+  printf '\n' >&2
+  printf '  Re-run without sudo:\n' >&2
+  printf '    %scurl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash%s\n' "$c_bold" "$c_reset" >&2
+  printf '\n' >&2
+  printf '  (sudo is only used when running install.sh on the Linux VPS itself.)\n' >&2
+  exit 1
+fi
+
 MODE=$(detect_mode)
 if [ "$MODE" = "remote-setup" ]; then
   exec_remote_setup_wizard "$@"
@@ -1054,7 +1094,7 @@ else
   if [ -t 0 ] && [[ "$NON_INTERACTIVE" != 1 ]]; then
     printf "\nProceed with install? [%sY%s/n]: " "$c_green" "$c_reset"
     read -r ok_choice
-    if [[ "${ok_choice,,}" == "n" || "${ok_choice,,}" == "no" ]]; then
+    if [ "$(lower "$ok_choice")" = "n" ] || [ "$(lower "$ok_choice")" = "no" ]; then
       warn "Aborted by user."
       exit 0
     fi
