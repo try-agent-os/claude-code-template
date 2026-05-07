@@ -913,9 +913,9 @@ fi
 
 # When invoked via `curl ... | bash`, stdin is the pipe (script body), not the
 # terminal. Reroute stdin to /dev/tty so interactive `read` prompts wait for
-# the user. Skip if there's no controlling tty (e.g., real headless CI).
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-  exec </dev/tty
+# the user. Tolerate failure (headless / no controlling terminal).
+if [ ! -t 0 ]; then
+  exec </dev/tty 2>/dev/null || true
 fi
 
 MODE=$(detect_mode)
