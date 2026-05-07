@@ -6,6 +6,13 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Fixed (hotfix-mac-bash32: macOS bash 3.2 + curl-pipe + sudo guard)
+- `install.sh` line 78 used `${BASH_SOURCE[0]}` directly under `set -u`. When piped via `curl ... | bash` on macOS, BASH_SOURCE[0] is empty/unset and the script aborted with `unbound variable`. Replaced with a `${BASH_SOURCE[0]:-${0:-/dev/stdin}}` fallback chain plus an `[ -f "$_SELF" ]` guard that leaves `SCRIPT_DIR=""` when there is no on-disk script (Mac branch git-clones the template anyway).
+- `${var,,}` lowercase parameter expansion is bash 4+; macOS system bash is 3.2.57. All 8 occurrences (lines 212, 402, 554, 587, 607, 724, 739, 1057) replaced with a `lower()` helper that uses `tr '[:upper:]' '[:lower:]'`. Added a matching `upper()` helper for symmetry.
+- Audited the rest of the script for bash-4-isms — no `mapfile` / `readarray` / `declare -n` / `declare -A` / `[[ -v ... ]]` / `${var@Q}` / single-char `${var,}` `${var^}` found.
+- Added a Darwin-sudo guard right before `detect_mode`: running `install.sh` with sudo on macOS now bails out with a clear hint to re-run without sudo. Rationale: the Mac wizard manages `~/.ssh/config`, drives `claude setup-token` in the user's browser, and only sudoes on the remote VPS via ssh — running locally as root would resolve `~/.ssh/config` to `/root/.ssh/config` and break auth.
+- The `install.sh` usage header comment block now spells out the macOS (no sudo) vs Linux (sudo) one-liners explicitly. README already documents this via T12-fix.
+
 ### Added (T06-amend6: multi-admin end-to-end)
 - `install.sh` Linux-side wizard (Step 2) now consumes `TG_ADMIN_USER_IDS` / `TG_ADMIN_USERNAMES` env vars from the Mac wrapper (Step 4b). Falls back to a single `TG_USER_ID` prompt when no env is provided, and back-fills `TG_ADMIN_USER_IDS` from it for consistency.
 - `/etc/agent-os/agent-os.env` (Step 11) now writes `TELEGRAM_ADMIN_USER_IDS`, `TELEGRAM_ADMIN_USERNAMES`, and the legacy `TELEGRAM_USER_ID` (= first admin).
