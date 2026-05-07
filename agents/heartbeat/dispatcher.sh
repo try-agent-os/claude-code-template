@@ -14,7 +14,15 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 REPO="$REPO_ROOT"
 LOCK="/tmp/agentOS-dispatcher.lock"
 LOG_DIR="$REPO/logs"
-CLAUDE="$HOME/.local/bin/claude"
+# claude binary location: prefer PATH (apt installs to /usr/bin/claude on Linux,
+# Homebrew/npm to /opt/homebrew/bin or ~/.local/bin on Mac). Fall back to the
+# bootstrap-installer default for older Mac dev setups.
+CLAUDE="$(command -v claude 2>/dev/null || true)"
+[ -z "$CLAUDE" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE="$HOME/.local/bin/claude"
+if [ -z "$CLAUDE" ]; then
+  echo "ERROR: claude not on PATH and not at \$HOME/.local/bin/claude" >&2
+  exit 1
+fi
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"

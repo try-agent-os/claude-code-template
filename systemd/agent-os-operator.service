@@ -26,7 +26,11 @@ Restart=on-failure
 RestartSec=30
 
 # Hardening
-NoNewPrivileges=yes
+# NoNewPrivileges=no is required: tmux invokes setuid /usr/lib/.../utempter to
+# update utmp/wtmp on session create. With NoNewPrivileges=yes utempter fails
+# with "pututline: Permission denied" and tmux exits 1, which makes systemd
+# tear the unit down (status=1/FAILURE) before claude even gets a pty.
+NoNewPrivileges=no
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
