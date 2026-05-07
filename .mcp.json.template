@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "/usr/bin/node",
+      "args": ["${INSTALL_ROOT}/telegram-mcp/dist/index.js"],
+      "env": {
+        "TELEGRAM_BOT_TOKEN": "${TG_BOT_TOKEN}",
+        "TELEGRAM_USER_ID": "${TELEGRAM_USER_ID}",
+        "PORT": "3848"
+      }
+    }
+  }
+}

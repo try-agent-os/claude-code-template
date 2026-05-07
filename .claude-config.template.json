@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "claude-peers": {
+      "type": "http",
+      "url": "http://127.0.0.1:7899/mcp"
+    },
+    "saga-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:3851/mcp"
+    }
+  }
+}

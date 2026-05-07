@@ -1,0 +1,34 @@
+[Unit]
+Description=AgentOS telegram-mcp (Telegram bot + MCP stdio)
+Documentation=https://github.com/try-agent-os/claude-code-template
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={AGENT_USER}
+Group={AGENT_USER}
+# CRITICAL: cwd determines where telegram-mcp writes messages.db (relative path
+# in upstream src/db.ts — process.cwd() + 'messages.db'). Keep it under
+# STATE_DIR so the DB persists across upgrades. See /tmp/telegram-mcp-db-analysis.md
+WorkingDirectory={STATE_DIR}/telegram-mcp
+EnvironmentFile={ENV_FILE}
+Environment=NODE_ENV=production
+Environment=PORT=3848
+ExecStart=/usr/bin/node {INSTALL_ROOT}/telegram-mcp/dist/index.js
+Restart=on-failure
+RestartSec=30
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths={STATE_DIR} {LOG_DIR}
+
+# Logging
+StandardOutput=append:{LOG_DIR}/telegram-mcp.log
+StandardError=append:{LOG_DIR}/telegram-mcp-errors.log
+
+[Install]
+WantedBy=multi-user.target
