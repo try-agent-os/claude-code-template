@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "id": "agentos",
   "name": "agentos",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "AgentOS template marketplace: vendored upstream defaults + AgentOS channel + native plugins.",
   "owner": {
     "name": "Novo Studio",
@@ -13,65 +13,65 @@
       "name": "agent-sdk-dev",
       "version": "vendored-fb063cd",
       "category": "development",
-      "path": "./plugins/agent-sdk-dev/",
       "description": "Development kit for working with the Claude Agent SDK (scaffolds new SDK projects, py/ts verifiers).",
-      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/agent-sdk-dev"
+      "author": {"name": "Anthropic"},
+      "source": "./plugins/agent-sdk-dev/"
     },
     {
       "name": "code-review",
       "version": "vendored-fb063cd",
       "category": "development",
-      "path": "./plugins/code-review/",
       "description": "Automated code review for pull requests using multiple specialized agents with confidence-based scoring.",
-      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/code-review"
+      "author": {"name": "Anthropic"},
+      "source": "./plugins/code-review/"
     },
     {
       "name": "commit-commands",
       "version": "vendored-fb063cd",
       "category": "productivity",
-      "path": "./plugins/commit-commands/",
       "description": "Streamline your git workflow with simple commands for committing, pushing, and creating pull requests.",
-      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/commit-commands"
+      "author": {"name": "Anthropic"},
+      "source": "./plugins/commit-commands/"
     },
     {
       "name": "security-guidance",
       "version": "vendored-fb063cd",
       "category": "security",
-      "path": "./plugins/security-guidance/",
       "description": "Security reminder hook that warns about potential security issues when editing files (command injection, XSS, unsafe code patterns).",
-      "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/security-guidance"
+      "author": {"name": "Anthropic"},
+      "source": "./plugins/security-guidance/"
     },
     {
       "name": "claude-peers",
       "version": "vendored-fc26491",
       "category": "agentos-core",
-      "path": "./plugins/claude-peers/",
       "description": "Inter-agent messaging + channel push (single-server: tools + channel capability via shared broker).",
-      "source": "https://github.com/novostudiotech/claude-peers-mcp/tree/fc2649154d6c5aa94ae4fc766989d7f247be0617"
+      "author": {"name": "Novo Studio"},
+      "source": "./plugins/claude-peers/"
     },
     {
       "name": "telegram",
       "version": "vendored-3f6171e",
       "category": "agentos-core",
-      "path": "./plugins/telegram/",
       "description": "Telegram bot channel + reply tools (single-server: tools + channel capability via long-poll).",
-      "source": "https://github.com/novostudiotech/telegram-mcp/tree/3f6171ecf6e33d38669b6f0676f0ff336e731303"
+      "author": {"name": "Novo Studio"},
+      "source": "./plugins/telegram/"
     },
     {
       "name": "template-dev",
       "version": "0.1.0",
       "category": "agentos-core",
-      "path": "./plugins/template-dev/",
       "description": "Fork-ahead workflow for AgentOS template: bootstrap personal repo from template, sync upstream updates, manage template-managed vs personal-owned files.",
-      "source": "internal"
+      "author": {"name": "Novo Studio"},
+      "source": "./plugins/template-dev/"
     },
     {
       "name": "agentos-core",
       "version": "0.1.0",
       "category": "agentos-core",
-      "path": "./plugins/agentos-core/",
       "description": "Slash commands for managing AgentOS instance: /agentos:status, /agentos:restart, /agentos:verify, /agentos:logs, /agentos:peers, /agentos:heartbeat.",
-      "source": "internal"
+      "author": {"name": "Novo Studio"},
+      "source": "./plugins/agentos-core/"
     }
   ]
 }
