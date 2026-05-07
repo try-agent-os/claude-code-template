@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "type": "sse",
+      "url": "http://localhost:3848/sse"
+    },
+    "saga-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3851/sse"
+    }
+  }
+}
