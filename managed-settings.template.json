@@ -1,9 +1,9 @@
 {
-  "$comment": "AgentOS managed settings — installed to /etc/claude-code/managed-settings.json by install.sh. This file enforces org-wide policy on every claude-code invocation regardless of user-scope or project-scope settings.json.",
+  "$comment": "AgentOS managed settings — installed to /etc/claude-code/managed-settings.json by install.sh. This file enforces org-wide policy on every claude-code invocation regardless of user-scope or project-scope settings.json. Schema validated against claude-code 2.1.119+: enabledPlugins / allowedChannelPlugins / strictKnownMarketplaces are RECORDS (objects keyed by name), not arrays. The empty-object value `{}` is a valid 'enable with no per-plugin overrides' marker; future config (per-plugin permissions, etc.) goes inside the value.",
 
   "autoUpdatesChannel": "stable",
   "channelsEnabled": true,
-  "minimumVersion": "2.1.132",
+  "minimumVersion": "2.1.119",
 
   "sandbox": {
     "enabled": true,
@@ -12,19 +12,19 @@
 
   "forceLoginMethod": "claudeai",
 
-  "allowedChannelPlugins": [
-    "claude-peers@agentos",
-    "telegram@agentos"
-  ],
+  "allowedChannelPlugins": {
+    "claude-peers@agentos": {},
+    "telegram@agentos": {}
+  },
 
-  "enabledPlugins": [
-    "claude-peers@agentos",
-    "telegram@agentos",
-    "agent-sdk-dev@anthropic",
-    "code-review@anthropic",
-    "commit-commands@anthropic",
-    "security-guidance@anthropic"
-  ],
+  "enabledPlugins": {
+    "claude-peers@agentos": {},
+    "telegram@agentos": {},
+    "agent-sdk-dev@anthropic": {},
+    "code-review@anthropic": {},
+    "commit-commands@anthropic": {},
+    "security-guidance@anthropic": {}
+  },
 
   "permissions": {
     "allow": [
@@ -53,16 +53,15 @@
       "Bash(rm -rf /*)",
       "Bash(mkfs*)",
       "Bash(dd if=*)",
-      "Bash(:(){ :|:& };:)",
       "Bash(sudo rm*)",
       "Bash(sudo dd*)",
       "Bash(sudo mkfs*)"
     ]
   },
 
-  "strictKnownMarketplaces": [
-    "./.claude-plugin/marketplace.json"
-  ],
+  "strictKnownMarketplaces": {
+    "./.claude-plugin/marketplace.json": {}
+  },
 
   "env": {
     "DISABLE_AUTOUPDATER": "1",

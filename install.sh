@@ -1248,11 +1248,34 @@ step "2/18 wizard"
 # Ensure state dir exists for state file (root:agent-os comes later, but root for now)
 mkdir -p "$ETC_DIR"
 
-# Re-use existing env file if already configured (sources secrets back into env)
+# Re-use existing env file if already configured (sources secrets back into env).
+# CRITICAL: dot-source would override env vars passed via SSH/cmdline (e.g. the
+# Mac wizard re-running with NEW tokens). Save originals first, source the
+# file, then restore originals — file values only fill in MISSING vars.
 if [[ -f "$ENV_FILE" ]]; then
-  log "  ${ENV_FILE} exists — sourcing existing secrets"
+  log "  ${ENV_FILE} exists — sourcing existing secrets (incoming env vars take precedence)"
+  __ORIG_TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+  __ORIG_TG_BOT_TOKEN="${TG_BOT_TOKEN:-}"
+  __ORIG_CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  __ORIG_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+  __ORIG_OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+  __ORIG_TG_USER_ID="${TG_USER_ID:-}"
+  __ORIG_TG_ADMIN_USER_IDS="${TG_ADMIN_USER_IDS:-}"
+  __ORIG_TG_ADMIN_USERNAMES="${TG_ADMIN_USERNAMES:-}"
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
+  # Restore non-empty originals (incoming wins; if not provided, file value stands)
+  TELEGRAM_BOT_TOKEN="${__ORIG_TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
+  TG_BOT_TOKEN="${__ORIG_TG_BOT_TOKEN:-${TG_BOT_TOKEN:-}}"
+  CLAUDE_CODE_OAUTH_TOKEN="${__ORIG_CLAUDE_CODE_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}"
+  ANTHROPIC_API_KEY="${__ORIG_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+  OPENAI_API_KEY="${__ORIG_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+  TG_USER_ID="${__ORIG_TG_USER_ID:-${TG_USER_ID:-}}"
+  TG_ADMIN_USER_IDS="${__ORIG_TG_ADMIN_USER_IDS:-${TG_ADMIN_USER_IDS:-}}"
+  TG_ADMIN_USERNAMES="${__ORIG_TG_ADMIN_USERNAMES:-${TG_ADMIN_USERNAMES:-}}"
+  unset __ORIG_TELEGRAM_BOT_TOKEN __ORIG_TG_BOT_TOKEN __ORIG_CLAUDE_CODE_OAUTH_TOKEN \
+        __ORIG_ANTHROPIC_API_KEY __ORIG_OPENAI_API_KEY __ORIG_TG_USER_ID \
+        __ORIG_TG_ADMIN_USER_IDS __ORIG_TG_ADMIN_USERNAMES
 fi
 
 if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
@@ -1798,9 +1821,11 @@ if [[ -f "$MS_TPL" ]]; then
     # Strip telegram@agentos from enabledPlugins + allowedChannelPlugins,
     # and drop mcp__telegram__* permission. Result is a saga + claude-peers
     # only managed-settings.json — no telegram references at all.
+    # NOTE: enabledPlugins / allowedChannelPlugins are OBJECTS (records)
+    # in claude-code 2.1.119+ schema, not arrays — use `del(.[name])`.
     jq '
-      .enabledPlugins         |= map(select(. != "telegram@agentos"))
-      | .allowedChannelPlugins  |= map(select(. != "telegram@agentos"))
+      .enabledPlugins         |= del(.["telegram@agentos"])
+      | .allowedChannelPlugins  |= del(.["telegram@agentos"])
       | .permissions.allow      |= map(select(. != "mcp__telegram__*"))
     ' "$MS_TPL" > "$CLAUDE_MANAGED_FILE"
     chown root:root "$CLAUDE_MANAGED_FILE"
