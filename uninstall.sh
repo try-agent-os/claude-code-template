@@ -2,12 +2,16 @@
 # AgentOS uninstaller — reverses install.sh.
 #
 # Usage:
-#   sudo ./uninstall.sh           # stops + disables units, removes unit files,
-#                                 # KEEPS data (state, logs, env file, agent-os user).
-#   sudo ./uninstall.sh --purge   # additionally removes /var/lib/agent-os,
-#                                 # /var/log/agent-os, /etc/agent-os,
-#                                 # /opt/agent-os, /etc/claude-code,
-#                                 # the agent-os user, and the apt source.
+#   sudo ./uninstall.sh             # stops + disables units, removes unit files,
+#                                   # KEEPS data (state, logs, env file, agent-os user).
+#   sudo ./uninstall.sh --purge     # additionally removes /var/lib/agent-os,
+#                                   # /var/log/agent-os, /etc/agent-os,
+#                                   # /opt/agent-os, /etc/claude-code,
+#                                   # the agent-os user, and the apt source.
+#   sudo ./uninstall.sh --reset-state
+#                                   # ONLY deletes /etc/agent-os/install.state.json
+#                                   # so install.sh re-prompts the wizard. Services
+#                                   # and data remain intact.
 #
 # Idempotent — running twice on a clean system is a no-op.
 
@@ -22,9 +26,11 @@ readonly ETC_DIR="/etc/agent-os"
 readonly CLAUDE_MANAGED_DIR="/etc/claude-code"
 
 PURGE=0
+RESET_STATE_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --purge) PURGE=1 ;;
+    --reset-state) RESET_STATE_ONLY=1 ;;
     -h|--help) sed -n '/^# Usage:/,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//;$d'; exit 0 ;;
     *) echo "Unknown flag: $arg" >&2; exit 1 ;;
   esac
@@ -33,6 +39,19 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run as root (use sudo)." >&2; exit 1; }
 
 log() { printf '\033[1;32m[uninstall]\033[0m %s\n' "$*"; }
+
+# --reset-state: delete only the wizard state file. Services + data stay.
+if [[ "$RESET_STATE_ONLY" == 1 ]]; then
+  STATE_FILE="${ETC_DIR}/install.state.json"
+  if [[ -f "$STATE_FILE" ]]; then
+    rm -f "$STATE_FILE"
+    log "removed wizard state: $STATE_FILE"
+  else
+    log "no wizard state file at $STATE_FILE — nothing to do"
+  fi
+  log "Services left running. Re-run install.sh to re-enter wizard answers."
+  exit 0
+fi
 
 UNITS=(
   agent-os-dispatcher.timer
