@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+messages.db
+messages.db-*
+access.json
+messages.json
+.claude/

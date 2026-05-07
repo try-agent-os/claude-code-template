@@ -1,8 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "agentos-template",
-  "version": "0.1.0",
-  "description": "AgentOS template marketplace: vendored upstream defaults + AgentOS-native plugins.",
+  "id": "agentos",
+  "name": "agentos",
+  "version": "0.2.0",
+  "description": "AgentOS template marketplace: vendored upstream defaults + AgentOS channel + native plugins.",
   "owner": {
     "name": "Novo Studio",
     "email": "krylov@vasily.dev"
@@ -39,6 +40,22 @@
       "path": "./plugins/security-guidance/",
       "description": "Security reminder hook that warns about potential security issues when editing files (command injection, XSS, unsafe code patterns).",
       "source": "https://github.com/anthropics/claude-code/tree/fb063cd5e0716c2369955c8a9811849ba85f21d3/plugins/security-guidance"
+    },
+    {
+      "name": "claude-peers",
+      "version": "vendored-fc26491",
+      "category": "agentos-core",
+      "path": "./plugins/claude-peers/",
+      "description": "Inter-agent messaging + channel push (single-server: tools + channel capability via shared broker).",
+      "source": "https://github.com/novostudiotech/claude-peers-mcp/tree/fc2649154d6c5aa94ae4fc766989d7f247be0617"
+    },
+    {
+      "name": "telegram",
+      "version": "vendored-3f6171e",
+      "category": "agentos-core",
+      "path": "./plugins/telegram/",
+      "description": "Telegram bot channel + reply tools (single-server: tools + channel capability via long-poll).",
+      "source": "https://github.com/novostudiotech/telegram-mcp/tree/3f6171ecf6e33d38669b6f0676f0ff336e731303"
     },
     {
       "name": "template-dev",
