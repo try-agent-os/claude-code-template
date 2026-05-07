@@ -354,7 +354,7 @@ require_cli() {
 
 # Append (idempotent) an SSH alias to ~/.ssh/config.
 ssh_config_add_alias() {
-  local alias="$1" ip="$2" identity="${3:-~/.ssh/id_ed25519}"
+  local alias="$1" ip="$2" user="${3:-root}" identity="${4:-$HOME/.ssh/id_ed25519}"
   local cfg="$HOME/.ssh/config"
   mkdir -p "$HOME/.ssh"
   touch "$cfg"
@@ -367,29 +367,87 @@ ssh_config_add_alias() {
 
 Host ${alias}
   HostName ${ip}
-  User root
+  User ${user}
   IdentityFile ${identity}
   IdentitiesOnly yes
   StrictHostKeyChecking accept-new
 EOF
-  ok "  added ~/.ssh/config Host '$alias' → $ip"
+  ok "  added ~/.ssh/config Host '$alias' → $ip (IdentityFile ${identity})"
 }
 
-# Wait for SSH to become reachable on a freshly-provisioned host.
-wait_until_ssh_ready() {
-  local alias="$1" tries=0 max=60
-  printf "  Waiting for sshd on %s" "$alias"
-  while ! ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new -o BatchMode=yes "$alias" true 2>/dev/null; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge "$max" ]; then
-      printf "\n"
-      fail "sshd on $alias did not respond within ~5 min."
+# Detect user's primary local SSH private key. Tries common paths in order.
+# Returns absolute path. If none found, generates ed25519 (with prompt).
+# Sets globals: $SSH_PRIVATE_KEY, $SSH_PUBLIC_KEY, $SSH_KEY_FINGERPRINT
+detect_or_generate_ssh_key() {
+  # Skip detection if already set in this session
+  if [ -n "${SSH_PRIVATE_KEY:-}" ] && [ -f "$SSH_PRIVATE_KEY" ]; then
+    return 0
+  fi
+  local candidates=(
+    "$HOME/.ssh/id_ed25519"
+    "$HOME/.ssh/id_rsa"
+    "$HOME/.ssh/id_ecdsa"
+    "$HOME/.ssh/id_dsa"
+  )
+  local k
+  for k in "${candidates[@]}"; do
+    if [ -f "$k" ] && [ -f "$k.pub" ]; then
+      SSH_PRIVATE_KEY="$k"
+      SSH_PUBLIC_KEY="$k.pub"
+      SSH_KEY_FINGERPRINT=$(ssh-keygen -lf "$SSH_PUBLIC_KEY" 2>/dev/null | awk '{print $2}')
+      ok "Using SSH key: $SSH_PRIVATE_KEY ($SSH_KEY_FINGERPRINT)"
+      return 0
     fi
+  done
+
+  # No key found — offer to generate
+  warn "No SSH key found in ~/.ssh/ (checked id_ed25519, id_rsa, id_ecdsa, id_dsa)"
+  printf "  Generate ed25519 key now? [%sY%s/n]: " "$c_green" "$c_reset"
+  local gen
+  read -r gen
+  if [ "$(lower "$gen")" = "n" ]; then
+    fail "No SSH key — cannot continue. Generate one with: ssh-keygen -t ed25519"
+  fi
+  ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N "" -C "agentos-deploy"
+  SSH_PRIVATE_KEY="$HOME/.ssh/id_ed25519"
+  SSH_PUBLIC_KEY="$HOME/.ssh/id_ed25519.pub"
+  SSH_KEY_FINGERPRINT=$(ssh-keygen -lf "$SSH_PUBLIC_KEY" 2>/dev/null | awk '{print $2}')
+  ok "Generated $SSH_PRIVATE_KEY"
+}
+
+# Wait for SSH to become reachable AND authenticate on a freshly-provisioned host.
+# Bounded loop: max_attempts × 2s. Tests real auth (BatchMode), not just port.
+wait_until_ssh_ready() {
+  local alias="$1"
+  local max_attempts="${2:-60}"  # 60 × 2s = 2 min
+  local i
+  printf "  Waiting for sshd on %s" "$alias"
+  for i in $(seq 1 "$max_attempts"); do
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$alias" true 2>/dev/null; then
+      printf "\n"
+      ok "SSH auth OK after ${i} × 2s"
+      return 0
+    fi
+    sleep 2
     printf "."
-    sleep 5
   done
   printf "\n"
-  ok "  sshd on $alias ready."
+  fail "  SSH to $alias failed after $((max_attempts * 2))s.
+
+  Most likely cause: SSH key mismatch.
+
+  Check:
+    • cat ~/.ssh/config | grep -A 5 'Host $alias' — what IdentityFile is configured
+    • ls ~/.ssh/id_* — what private keys exist on this Mac
+    • doctl compute ssh-key list — what keys are registered with DigitalOcean (or hcloud / linode-cli)
+
+  If the wizard registered the wrong key with the provider, fix:
+    1. Add this Mac's key to the provider:
+       doctl compute ssh-key import agentos-deploy --public-key-file ${SSH_PUBLIC_KEY:-~/.ssh/id_ed25519.pub}
+    2. Delete the stuck droplet:
+       doctl compute droplet delete $alias --force
+    3. Re-run: bash install.sh   (resumes from state.json)
+  "
 }
 
 prompt_existing_alias() {
@@ -407,6 +465,11 @@ prompt_existing_alias() {
   if [ -z "${SSH_ALIAS:-}" ]; then
     fail "No alias provided."
   fi
+  # Verify the alias resolves; do NOT touch ~/.ssh/config (user's existing entry stays as-is).
+  if ! ssh -G "$SSH_ALIAS" >/dev/null 2>&1; then
+    fail "ssh -G '$SSH_ALIAS' failed — alias not configured. Add to ~/.ssh/config or pick another."
+  fi
+  ok "  Using existing alias '$SSH_ALIAS' (~/.ssh/config left untouched)"
 }
 
 ensure_brew_cli() {
@@ -443,20 +506,38 @@ provision_do_droplet() {
     read -r _
   fi
   ok "doctl ready"
-  local region size name ssh_key_id ip
+
+  # Pick or upload SSH key
+  detect_or_generate_ssh_key  # sets SSH_PRIVATE_KEY / SSH_PUBLIC_KEY / SSH_KEY_FINGERPRINT
+
+  # Find or upload local pubkey on DO (match by fingerprint)
+  local do_key_id
+  do_key_id=$(doctl compute ssh-key list --format ID,FingerprintSHA256 --no-header 2>/dev/null \
+    | awk -v fp="$SSH_KEY_FINGERPRINT" '$2==fp {print $1; exit}')
+
+  if [ -z "$do_key_id" ]; then
+    info "  Local key fingerprint $SSH_KEY_FINGERPRINT not found on DO. Uploading..."
+    do_key_id=$(doctl compute ssh-key import "agentos-$(hostname -s)" \
+      --public-key-file "$SSH_PUBLIC_KEY" --format ID --no-header 2>/dev/null || true)
+    if [ -z "$do_key_id" ]; then
+      fail "Failed to import SSH key to DO. Try manually: doctl compute ssh-key import agentos-$(hostname -s) --public-key-file $SSH_PUBLIC_KEY"
+    fi
+    ok "  Uploaded as DO key id $do_key_id"
+  else
+    ok "  Local key already registered on DO (id $do_key_id)"
+  fi
+
+  local region size name ip
   printf "  Droplet name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Region [%sfra1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fra1}"
   printf "  Size [%ss-4vcpu-8gb%s] (~\$48/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-s-4vcpu-8gb}"
-  ssh_key_id=$(doctl compute ssh-key list --format ID --no-header 2>/dev/null | head -1 || true)
-  if [ -z "$ssh_key_id" ]; then
-    fail "doctl: no SSH keys registered. Add one with: doctl compute ssh-key import"
-  fi
+
   info "  Creating droplet '$name' in $region ($size)…"
   ip=$(doctl compute droplet create "$name" \
         --image ubuntu-24-04-x64 \
         --size "$size" \
         --region "$region" \
-        --ssh-keys "$ssh_key_id" \
+        --ssh-keys "$do_key_id" \
         --wait \
         --format PublicIPv4 --no-header)
   if [ -z "$ip" ]; then
@@ -464,7 +545,7 @@ provision_do_droplet() {
   fi
   ok "  droplet up: $ip"
   SSH_ALIAS="$name"
-  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip" "root" "$SSH_PRIVATE_KEY"
   wait_until_ssh_ready "$SSH_ALIAS"
   deploy_state_save_host "$SSH_ALIAS" "$ip" "digitalocean" "$region" "$size"
 }
@@ -479,14 +560,31 @@ provision_hetzner() {
     read -r _
   fi
   ok "hcloud ready"
-  local region size name ssh_key_name ip
+
+  # Pick or upload SSH key
+  detect_or_generate_ssh_key
+
+  # Find or upload local pubkey on Hetzner (match by fingerprint)
+  local ssh_key_name
+  ssh_key_name=$(hcloud ssh-key list -o json 2>/dev/null \
+    | jq -r --arg fp "$SSH_KEY_FINGERPRINT" '.[] | select(.fingerprint==($fp | sub("^SHA256:"; ""))) | .name' \
+    | head -1 || true)
+
+  if [ -z "$ssh_key_name" ]; then
+    ssh_key_name="agentos-$(hostname -s)"
+    info "  Local key fingerprint $SSH_KEY_FINGERPRINT not found on Hetzner. Uploading as '$ssh_key_name'..."
+    hcloud ssh-key create --name "$ssh_key_name" --public-key-from-file "$SSH_PUBLIC_KEY" >/dev/null 2>&1 \
+      || fail "Failed to upload SSH key to Hetzner. Try manually: hcloud ssh-key create --name $ssh_key_name --public-key-from-file $SSH_PUBLIC_KEY"
+    ok "  Uploaded as '$ssh_key_name'"
+  else
+    ok "  Local key already registered on Hetzner (name '$ssh_key_name')"
+  fi
+
+  local region size name ip
   printf "  Server name [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Location [%sfsn1%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-fsn1}"
   printf "  Type [%scax21%s] (~€7/mo, ARM): " "$c_blue" "$c_reset"; read -r size; size="${size:-cax21}"
-  ssh_key_name=$(hcloud ssh-key list -o noheader -o columns=name 2>/dev/null | head -1 || true)
-  if [ -z "$ssh_key_name" ]; then
-    fail "hcloud: no SSH keys registered. Add one with: hcloud ssh-key create"
-  fi
+
   info "  Creating server '$name' in $region ($size)…"
   local out
   out=$(hcloud server create \
@@ -502,7 +600,7 @@ provision_hetzner() {
   fi
   ok "  server up: $ip"
   SSH_ALIAS="$name"
-  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip" "root" "$SSH_PRIVATE_KEY"
   wait_until_ssh_ready "$SSH_ALIAS"
   deploy_state_save_host "$SSH_ALIAS" "$ip" "hetzner" "$region" "$size"
 }
@@ -517,15 +615,17 @@ provision_linode() {
     read -r _
   fi
   ok "linode-cli ready"
+
+  # Pick or generate SSH key
+  detect_or_generate_ssh_key
+
   local region size name pubkey ip
   printf "  Linode label [%sagentos%s]: " "$c_blue" "$c_reset"; read -r name; name="${name:-agentos}"
   printf "  Region [%seu-central%s]: " "$c_blue" "$c_reset"; read -r region; region="${region:-eu-central}"
   printf "  Type [%sg6-standard-2%s] (~\$24/mo): " "$c_blue" "$c_reset"; read -r size; size="${size:-g6-standard-2}"
-  if [ ! -f "$HOME/.ssh/id_ed25519.pub" ]; then
-    fail "~/.ssh/id_ed25519.pub not found. Generate one with: ssh-keygen -t ed25519"
-  fi
-  pubkey=$(cat "$HOME/.ssh/id_ed25519.pub")
-  info "  Creating Linode '$name' in $region ($size)…"
+
+  pubkey=$(cat "$SSH_PUBLIC_KEY")
+  info "  Creating Linode '$name' in $region ($size) with key $SSH_PUBLIC_KEY…"
   ip=$(linode-cli linodes create \
         --label "$name" \
         --image linode/ubuntu24.04 \
@@ -538,7 +638,7 @@ provision_linode() {
   fi
   ok "  Linode up: $ip"
   SSH_ALIAS="$name"
-  ssh_config_add_alias "$SSH_ALIAS" "$ip"
+  ssh_config_add_alias "$SSH_ALIAS" "$ip" "root" "$SSH_PRIVATE_KEY"
   wait_until_ssh_ready "$SSH_ALIAS"
   deploy_state_save_host "$SSH_ALIAS" "$ip" "linode" "$region" "$size"
 }
@@ -619,23 +719,9 @@ exec_remote_setup_wizard() {
   chmod 600 ~/.ssh/config
   ok "~/.ssh/config writable"
 
-  # SSH key
-  if [[ ! -f ~/.ssh/id_ed25519 ]] && [[ ! -f ~/.ssh/id_rsa ]]; then
-    warn "No SSH key found at ~/.ssh/id_ed25519 or ~/.ssh/id_rsa"
-    printf "  Generate ed25519 key now? [%sY%s/n]: " "$c_green" "$c_reset"
-    local gen_choice
-    read -r gen_choice
-    if [ "$(lower "$gen_choice")" != "n" ]; then
-      ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "agentos-deploy"
-      ok "Generated ~/.ssh/id_ed25519"
-      info "Add this to your provider account (DO/Hetzner/Linode):"
-      cat ~/.ssh/id_ed25519.pub
-      printf "  Press ENTER when added: "
-      read -r _
-    fi
-  else
-    ok "SSH key present"
-  fi
+  # SSH key — auto-detect (id_ed25519, id_rsa, id_ecdsa, id_dsa) or offer to generate.
+  # Sets globals SSH_PRIVATE_KEY / SSH_PUBLIC_KEY / SSH_KEY_FINGERPRINT for use by provision_*.
+  detect_or_generate_ssh_key
 
   # Show previous hosts (resume hint)
   local prev_aliases
