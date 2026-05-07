@@ -1296,7 +1296,8 @@ apt-get install -y --no-install-recommends \
   build-essential cmake ffmpeg \
   python3 python3-pip \
   ufw \
-  bubblewrap socat
+  bubblewrap socat \
+  unzip
 
 # yt-dlp via pip (apt version often lags). Ubuntu 23.04+ requires --break-system-packages.
 if ! command -v yt-dlp >/dev/null 2>&1; then
