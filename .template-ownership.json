@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "AgentOS template — file ownership manifest. Consumed by plugins/template-dev/skills/sync (via jq) to decide which paths upstream may overwrite vs. which are personal-owned. See UPGRADING.md §2 for the human-readable convention.",
+  "version": 1,
+  "template_managed": [
+    "agents/sysadmin/CLAUDE.md",
+    "agents/sysadmin/SOUL.md",
+    "agents/operator/CLAUDE.md",
+    "agents/operator/SOUL.md",
+    "agents/heartbeat/**",
+    "scripts/**",
+    "systemd/**",
+    "launchd/**",
+    "plugins/**",
+    "skills/**",
+    ".claude/**",
+    ".claude-plugin/**",
+    "install.sh",
+    "uninstall.sh",
+    "verify.sh",
+    "README.md",
+    "ARCHITECTURE.md",
+    "UPGRADING.md",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "LICENSE",
+    ".env.example",
+    ".mcp.json.template",
+    ".claude-config.template.json",
+    "managed-settings.template.json",
+    ".gitignore",
+    ".template-ownership.json",
+    "examples/**",
+    "tests/**"
+  ],
+  "personal_owned": [
+    "memory/**",
+    ".env",
+    ".mcp.json",
+    "logs/**",
+    "studio/**",
+    "clients/**",
+    "research/**",
+    "resources/**"
+  ],
+  "generated": [
+    "memory/epic-map.json",
+    "memory/check-log.md",
+    "memory/context.md"
+  ]
+}

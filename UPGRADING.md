@@ -54,9 +54,11 @@ To make merges predictable, the template (will) adopt a **T / P marker conventio
 - **T (template-owned)** — files you should let upstream overwrite. install.sh and the planned `template-dev` plugin's sync skill will replace these on update.
 - **P (project-owned)** — files you should preserve. The sync tool will leave these untouched even if upstream changes them.
 
-> **Status (2026-05-07):** the T/P marker scheme is **not yet implemented** in this repo. The plan is to either (a) add a header comment line `# Provenance: T` / `# Provenance: P` to each file, or (b) maintain `.template-manifest.json` listing T/P paths. The decision will land alongside the `template-dev@agentos` sync skill (placeholder in [`marketplace.json`](./.claude-plugin/marketplace.json), commit `0.0.0-placeholder`).
+> **Status (2026-05-07):** the T/P marker scheme is now declared in [`.template-ownership.json`](./.template-ownership.json) at the repo root. It is a machine-readable JSON manifest with three globs lists — `template_managed` (T), `personal_owned` (P), and `generated`. The `template-dev@agentos` sync skill consumes it via `jq -r '.template_managed[]' .template-ownership.json` to compute the upstream-overwrite set.
 
-For now, use git to track ownership: changes you authored are in your fork's commits; upstream changes come in via merges.
+If you fork the template and start authoring outside the P globs, either (a) move that file into a P-globbed directory (`memory/`, `studio/`, etc.), or (b) edit `.template-ownership.json` in your fork to extend the `personal_owned` list. The sync skill always trusts the manifest in your working tree, not the upstream version.
+
+Changes you authored are in your fork's commits; upstream changes come in via merges. The manifest tells the sync tool which files to auto-apply vs. flag for manual review.
 
 ### Suggested current rules of thumb
 

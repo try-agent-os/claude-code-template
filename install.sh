@@ -8,9 +8,13 @@
 #   sudo /tmp/agentos-installer/install.sh
 #
 # Flags:
-#   --minimal                       Skip operator (saga + dispatcher only).
-#                                   Plugins (claude-peers, telegram) still install
-#                                   but only spawn when an operator-style session runs.
+#   --minimal                       Skip operator + telegram entirely.
+#                                   Subsets the install: no telegram plugin bun deps,
+#                                   no whisper.cpp build, no telegram bot wizard prompts,
+#                                   no telegram-coupled lifecycle hooks (notify-stop,
+#                                   log-subagent), no operator systemd unit.
+#                                   Result: saga-mcp + dispatcher + claude-peers only
+#                                   (~14 install steps instead of 18).
 #   --with=feature-dev,frontend-design  Comma-separated optional plugins to vendor
 #   --non-interactive               Read all wizard answers from preset env vars (CI/automation)
 #   --bootstrap-personal-repo URL   Replace template remote with user's own GitHub fork
@@ -573,20 +577,29 @@ exec_remote_setup_wizard() {
   printf "Re-run anytime: %sbash install.sh%s (state at %s)\n" "$c_bold" "$c_reset" "$DEPLOY_STATE"
 }
 
+# detect_mode dispatches BEFORE any Linux-specific check (os-release, apt, etc.).
+# On macOS this calls exec_remote_setup_wizard and exits; the local-install
+# logic below is unreachable on Mac. Keep this dispatch the FIRST thing after
+# arg parsing — any Linux-only code added above will break the Mac branch.
 MODE=$(detect_mode)
 if [ "$MODE" = "remote-setup" ]; then
   exec_remote_setup_wizard "$@"
-  exit $?
+  exit 0
 fi
-# else: fall through to local install logic below
+if [ "$MODE" != "local-install" ]; then
+  fail "Unknown mode '$MODE' from detect_mode (expected: remote-setup or local-install)."
+fi
+# Below this line: Linux-only territory. Mac never reaches it.
 
 ###############################################################################
-# Step 1 — sanity (root, OS, arch)
+# Step 1 — sanity (root, OS, arch) — Linux-only branch
 ###############################################################################
 step "1/18 sanity checks"
 
 [[ $EUID -eq 0 ]] || fail "Run as root (use sudo)."
 
+# /etc/os-release is Linux-specific; this check is gated by MODE=local-install
+# above so it never executes on macOS.
 if [[ ! -r /etc/os-release ]]; then
   fail "/etc/os-release missing — cannot detect OS."
 fi
@@ -648,10 +661,16 @@ else
     header "Project identity"
     PROJECT_NAME=$(ask "Project slug (alphanumeric+dash)" "project_name" "agentos")
 
-    header "Telegram bot"
-    info "Open @BotFather, /newbot, paste token below."
-    TG_BOT_TOKEN=$(ask_secret "Bot token" "TELEGRAM_BOT_TOKEN")
-    TG_USER_ID=$(ask "Your Telegram user ID (numeric, get from @userinfobot)" "tg_user_id" "")
+    if [[ "${MINIMAL}" == 1 ]]; then
+      log "  --minimal: skipping Telegram bot wizard prompts"
+      TG_BOT_TOKEN=""
+      TG_USER_ID=""
+    else
+      header "Telegram bot"
+      info "Open @BotFather, /newbot, paste token below."
+      TG_BOT_TOKEN=$(ask_secret "Bot token" "TELEGRAM_BOT_TOKEN")
+      TG_USER_ID=$(ask "Your Telegram user ID (numeric, get from @userinfobot)" "tg_user_id" "")
+    fi
 
     header "Git remote (optional)"
     info "Skip with empty value if you'll set up later."
@@ -663,9 +682,13 @@ else
       warn "Timezone '$TIMEZONE' not in system list. Continuing anyway."
     fi
 
-    header "Whisper model"
-    info "tiny=75MB (fast, low quality), base=150MB (balanced), medium=1.5GB (default, full quality)"
-    WHISPER_MODEL=$(ask "Whisper model size" "whisper_model" "medium")
+    if [[ "${MINIMAL}" == 1 ]]; then
+      log "  --minimal: skipping Whisper model prompt (no telegram = no voice transcription)"
+    else
+      header "Whisper model"
+      info "tiny=75MB (fast, low quality), base=150MB (balanced), medium=1.5GB (default, full quality)"
+      WHISPER_MODEL=$(ask "Whisper model size" "whisper_model" "medium")
+    fi
 
     header "Claude Code OAuth"
     if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
@@ -893,8 +916,11 @@ else
     sudo -u "$AGENT_USER" bash -c "cd ${INSTALL_ROOT}/claude/plugins/claude-peers && ${BUN_PATH} install"
   fi
 
-  # telegram plugin (node + whisper.cpp build + model download)
-  if [[ -d "${INSTALL_ROOT}/claude/plugins/telegram" ]]; then
+  # telegram plugin (node + whisper.cpp build + model download).
+  # --minimal skips telegram entirely (no operator → no Telegram interface).
+  if [[ "${MINIMAL}" == 1 ]]; then
+    log "  --minimal: skipping telegram plugin install + whisper.cpp build"
+  elif [[ -d "${INSTALL_ROOT}/claude/plugins/telegram" ]]; then
     log "Installing telegram plugin npm deps + building whisper..."
     sudo -u "$AGENT_USER" bash -c "cd ${INSTALL_ROOT}/claude/plugins/telegram && /usr/bin/npm ci && /usr/bin/npm run build"
 
@@ -1063,8 +1089,22 @@ step "13/18 managed-settings"
 
 MS_TPL="${TEMPLATE_DIR}/managed-settings.template.json"
 if [[ -f "$MS_TPL" ]]; then
-  install -m 0644 -o root -g root "$MS_TPL" "$CLAUDE_MANAGED_FILE"
-  log "  installed ${CLAUDE_MANAGED_FILE}"
+  if [[ "${MINIMAL}" == 1 ]]; then
+    # Strip telegram@agentos from enabledPlugins + allowedChannelPlugins,
+    # and drop mcp__telegram__* permission. Result is a saga + claude-peers
+    # only managed-settings.json — no telegram references at all.
+    jq '
+      .enabledPlugins         |= map(select(. != "telegram@agentos"))
+      | .allowedChannelPlugins  |= map(select(. != "telegram@agentos"))
+      | .permissions.allow      |= map(select(. != "mcp__telegram__*"))
+    ' "$MS_TPL" > "$CLAUDE_MANAGED_FILE"
+    chown root:root "$CLAUDE_MANAGED_FILE"
+    chmod 0644 "$CLAUDE_MANAGED_FILE"
+    log "  installed ${CLAUDE_MANAGED_FILE} (--minimal: telegram@agentos stripped)"
+  else
+    install -m 0644 -o root -g root "$MS_TPL" "$CLAUDE_MANAGED_FILE"
+    log "  installed ${CLAUDE_MANAGED_FILE}"
+  fi
 else
   warn "  managed-settings.template.json missing in ${TEMPLATE_DIR} — skipping"
 fi
@@ -1077,6 +1117,35 @@ step "14/18 systemd reload"
 
 systemctl daemon-reload
 mark_step_completed 14
+
+###############################################################################
+# Step 14b (minimal-only) — strip telegram/operator-coupled lifecycle hooks
+###############################################################################
+# notify-stop.sh and log-subagent.sh both push to operator-via-telegram, so
+# they're useless without the operator. log-action.sh runs formatters which
+# are also a heavier dependency footprint. For minimal: keep only the core
+# guard + boot + enrich + session-end set.
+if [[ "${MINIMAL}" == 1 ]]; then
+  step "14b/18 minimal — strip telegram/operator-coupled hooks"
+  CLAUDE_REPO_DIR="${INSTALL_ROOT}/claude"
+  HOOKS_TO_REMOVE=(notify-stop.sh log-subagent.sh log-action.sh)
+  for h in "${HOOKS_TO_REMOVE[@]}"; do
+    if [[ -f "${CLAUDE_REPO_DIR}/.claude/hooks/${h}" ]]; then
+      rm -f "${CLAUDE_REPO_DIR}/.claude/hooks/${h}"
+      log "  removed .claude/hooks/${h}"
+    fi
+  done
+  # Strip the matching entries from settings.json so Claude Code doesn't try
+  # to invoke missing scripts. Use jq to drop Stop, SubagentStop, PostToolUse
+  # entries (the only events that referenced removed hooks).
+  SETTINGS="${CLAUDE_REPO_DIR}/.claude/settings.json"
+  if [[ -f "$SETTINGS" ]]; then
+    jq 'del(.hooks.Stop) | del(.hooks.SubagentStop) | del(.hooks.PostToolUse)' \
+      "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+    chown "$AGENT_USER:$AGENT_USER" "$SETTINGS"
+    log "  stripped Stop / SubagentStop / PostToolUse hook entries from .claude/settings.json"
+  fi
+fi
 
 ###############################################################################
 # Step 15 — initialize saga DB (first-boot)
@@ -1196,10 +1265,20 @@ fi
 ###############################################################################
 # Final summary
 ###############################################################################
+if [[ "${MINIMAL}" == 1 ]]; then
+  MODE_LABEL="AgentOS installed (minimal — saga + dispatcher + claude-peers, no operator/telegram)."
+  OPERATOR_LINE="  (no operator in --minimal mode — re-run install.sh without --minimal to add it)"
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher,saga-mcp}.log"
+else
+  MODE_LABEL="AgentOS installed."
+  OPERATOR_LINE="  Operator tmux: sudo -u ${AGENT_USER} tmux attach -t operator"
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher,saga-mcp}.log"
+fi
+
 cat <<EOF
 
 ========================================================================
-  AgentOS installed.
+  ${MODE_LABEL}
 ========================================================================
   Repo:          ${INSTALL_ROOT}/claude
   State:         ${STATE_DIR}
@@ -1213,9 +1292,9 @@ cat <<EOF
     heartbeat  -> ${CC_DIR_HEARTBEAT}
 
   Verify:        sudo systemctl status 'agent-os-*'
-  Operator tmux: sudo -u ${AGENT_USER} tmux attach -t operator
+${OPERATOR_LINE}
   Dispatcher:    journalctl -u agent-os-dispatcher.service -f
 
-  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher,saga-mcp}.log
+${LOGS_LINE}
 ========================================================================
 EOF
