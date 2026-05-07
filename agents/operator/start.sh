@@ -110,8 +110,7 @@ done
 
 tmux new-session -d -s "$SESSION" -c "$INSTALL_ROOT/agents/operator" \
   "claude --dangerously-skip-permissions ${ADD_DIRS[*]} \
-   --dangerously-load-development-channels server:claude-peers \
-   --dangerously-load-development-channels server:telegram"
+   --channels plugin:claude-peers@agentos plugin:telegram@agentos"
 
 sleep 5
 tmux send-keys -t "$SESSION" Enter

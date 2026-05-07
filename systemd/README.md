@@ -147,6 +147,33 @@ that PID dies, and `ExecStop=tmux kill-session -t operator` cleanly stops it.
 while the initial `tmux` invocation runs (~milliseconds), then mark it as
 exited and not restart.
 
+### Operator channel plugins
+
+The operator launches Claude Code with
+`--channels plugin:claude-peers@agentos plugin:telegram@agentos`. This activates
+the channel push capability of the two stdio MCP plugins (peers + telegram),
+allowing inbound messages to interrupt the session.
+
+We do **not** use `--dangerously-load-development-channels server:NAME` — that
+flag triggers an interactive trust prompt and is only meant for local dev. The
+production path is `allowedChannelPlugins` in `managed-settings.json` (written
+by `install.sh`) listing the plugin specs:
+
+```json
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    "claude-peers@agentos",
+    "telegram@agentos"
+  ]
+}
+```
+
+With those entries managed-settings sees the plugins as pre-approved, so
+`--channels plugin:NAME@agentos` activates their channels without a prompt.
+Plugins must be installed and enabled at user scope (or shipped via the
+`agentos` marketplace bundled in this template).
+
 ### Why `Type=oneshot` for the dispatcher
 
 The dispatcher script runs Claude Code workers, completes work, and exits.
