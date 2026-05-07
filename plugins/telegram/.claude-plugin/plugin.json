@@ -10,9 +10,13 @@
       "sensitive": true,
       "description": "Telegram bot API token from @BotFather"
     },
-    "user_id": {
-      "type": "number",
-      "description": "Authorized Telegram user ID (for restricting bot access)"
+    "admin_user_ids": {
+      "type": "string",
+      "description": "Comma-separated Telegram user IDs of authorized admins (empty = no access). Auto-populated by the install.sh / Mac wizard via /start polling."
+    },
+    "admin_usernames": {
+      "type": "string",
+      "description": "Comma-separated usernames (display only, populated by setup wizard)."
     }
   }
 }
