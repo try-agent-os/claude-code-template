@@ -1410,6 +1410,12 @@ install -d -o root         -g "$AGENT_USER" -m 0750 "$ETC_DIR" "$CLAUDE_MANAGED_
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CLAUDE_CONFIG_BASE"
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CC_DIR_OPERATOR" "$CC_DIR_DISPATCHER" "$CC_DIR_HEARTBEAT"
 
+# ${AGENT_HOME}/.config must exist before operator.service starts: the unit
+# lists it in ReadWritePaths and systemd's mount namespacing fails with
+# 226/NAMESPACE if the path is missing. Claude Code also writes here when
+# CLAUDE_CONFIG_DIR isn't honoured by every codepath (bun cache, etc.).
+install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "${AGENT_HOME}/.config"
+
 # Now that ETC_DIR is owned root:agent-os, fix state file ownership if it pre-existed
 if [ -f "$STATE_FILE" ]; then
   chown root:"$AGENT_USER" "$STATE_FILE" 2>/dev/null || true
