@@ -1,75 +1,143 @@
-# Example Skills — Reference Patterns
+# Example Skills — AgentOS Heartbeat
 
-These are **reference skills** taken from a real AgentOS deployment (Novo Studio). Most are tightly bound to that deployment's specific business workflows, connectors, data sources, and conventions.
+A reference set of 31 skills ported from a live AgentOS deployment (Novo Studio). Each skill is in current Claude Code skill format: directory with `SKILL.md` + frontmatter spec.
 
-## How to use these
+These skills are **examples** — they demonstrate patterns for building agents that scan inboxes, prep meetings, monitor Telegram, run self-healing loops, etc. They are not enabled by default. Copy what you need, adapt to your stack, and drop into `<repo>/.claude/skills/<name>/SKILL.md` (skills are watched live by Claude Code).
 
-- **Read for ideas**, not as drop-in components.
-- **Copy-paste-adapt** is the intended usage: pick a skill that resembles something you want, copy it into your own `agents/<name>/skills/`, then rewrite the company-specific bits (named contacts, custom tables, business jargon, MCP tool calls) for your context.
-- The Russian prose is preserved as part of the authenticity of the reference — you can read past it or translate per-skill as you adapt.
-- For the **generic** skills shipped with the template (memory-search, event-correlation, self-heal-*, signal-analysis, etc.), see [`agents/heartbeat/skills/`](../../agents/heartbeat/skills/).
+## Layout
 
-## Index
+```
+examples/skills/
+├── generic/              # 27 skills useful to any AgentOS deployment
+│   ├── morning-brief/SKILL.md
+│   ├── gmail-triage/SKILL.md
+│   ├── meeting-prep/SKILL.md
+│   └── ...
+└── novo-specific/        # 4 skills bound to Novo Studio's mobile-services business
+    ├── mobile-prospect-discovery/SKILL.md
+    ├── mobile-prospect-scan/SKILL.md
+    ├── auto-outreach-draft/SKILL.md
+    └── outreach-trajectory/SKILL.md
+```
 
-### Daily / scheduled
+### `generic/` — drop-in candidates
 
-| Skill | One-line description |
-|-------|----------------------|
-| [morning-brief.md](morning-brief.md) | Morning briefing — meetings, tasks, PR status, pending replies, hot topics; sent to user via operator. |
-| [energy-checkin.md](energy-checkin.md) | Periodic Telegram pings about energy/mood; aimed at catching ADHD-burnout cycles early and adapting the day's plan. |
-| [whoop-morning-check.md](whoop-morning-check.md) | Pulls WHOOP recovery/HRV/RHR/sleep data; updates `memory/health.md`; alerts operator on low recovery. |
-| [timing-rebuild.md](timing-rebuild.md) | Daily rebuild of yesterday's time entries from raw app usage in Timing SQLite + rules in `memory/timing-rules.yaml`; sends preview to Telegram. |
-| [reply-watchdog.md](reply-watchdog.md) | Scans contact files for messages awaiting reply >24h; prevents ADHD task-switch losses in networking. |
+Communication / inbox / pipeline:
+- [`morning-brief`](generic/morning-brief/SKILL.md) — daily briefing (Calendar + tasks + PRs + pending replies)
+- [`gmail-triage`](generic/gmail-triage/SKILL.md) — classify inbox, sync sent mail to contact timelines
+- [`outbound-tracker`](generic/outbound-tracker/SKILL.md) — record outgoing email + Telegram into contacts
+- [`reply-watchdog`](generic/reply-watchdog/SKILL.md) — surface contacts waiting on a reply >24h
+- [`clickup-sync`](generic/clickup-sync/SKILL.md) — pull ClickUp pipeline into `memory/people.md`
 
-### Communication connectors
+Meetings:
+- [`meeting-prep`](generic/meeting-prep/SKILL.md) — pre-meeting briefing from Fireflies + CRM + Gmail
+- [`meeting-debrief`](generic/meeting-debrief/SKILL.md) — post-meeting transcript → action items → CRM
 
-| Skill | One-line description |
-|-------|----------------------|
-| [gmail-triage.md](gmail-triage.md) | Triages last-2h unread mail and SENT, classifies (client/lead/spam/newsletter), updates `contacts/*.md`. |
-| [telegram-scan.md](telegram-scan.md) | Exports all Telegram chats via tdl --raw, converts to markdown, updates contacts via Event Correlation. |
-| [telegram-export.md](telegram-export.md) | Exports a specific Telegram channel/chat/group through tdl into `resources/{slug}/posts/` plus `index.md`. |
-| [telegram-channel-analytics.md](telegram-channel-analytics.md) | Analyzes an exported Telegram channel and produces a structured `analytics.md` (top posts, topic categories, posting cadence, trends). |
-| [outbound-tracker.md](outbound-tracker.md) | Tracks the user's outgoing actions (Gmail SENT, Telegram OUT), correlates with `contacts/*.md`, updates timeline. Fixes "the system doesn't know what was already sent". |
+Contacts / memory:
+- [`contact-enrichment`](generic/contact-enrichment/SKILL.md) — fill contact file from all connectors
+- [`event-correlation`](generic/event-correlation/SKILL.md) — link new events to contacts
+- [`memory-search`](generic/memory-search/SKILL.md) — grep across `memory/`
 
-### Sales / outreach pipeline
+Telegram (require [tdl](https://github.com/iyear/tdl)):
+- [`telegram-scan`](generic/telegram-scan/SKILL.md) — periodic scan of all chats for signals
+- [`telegram-export`](generic/telegram-export/SKILL.md) — deep export of one channel/chat to `resources/`
+- [`telegram-channel-analytics`](generic/telegram-channel-analytics/SKILL.md) — top posts / themes / trends
 
-| Skill | One-line description |
-|-------|----------------------|
-| [mobile-prospect-discovery.md](mobile-prospect-discovery.md) | Active discovery of new mobile-app SaaS companies for a Mobile Prospects sheet; rotates 12 sources (App Store, G2, Crunchbase, LinkedIn Jobs, etc.). |
-| [mobile-prospect-scan.md](mobile-prospect-scan.md) | Continuous research on companies in Mobile Prospects: App Store ratings, hiring, funding, SDK compliance, complaints; updates Signal Score. |
-| [auto-outreach-draft.md](auto-outreach-draft.md) | Generates an outreach draft for a Mobile Prospects company at Signal Score >= 4; picks channel and offer, persists draft to Google Sheets. |
-| [outreach-trajectory.md](outreach-trajectory.md) | Builds a 6-8 touch sequence for an OPP lead; rewrites drafts to v2 standard, creates Funnel rows, schedules tracker reminders. |
-| [contact-enrichment.md](contact-enrichment.md) | On a new or incomplete contact, gathers data from all connectors (Telegram, LinkedIn, Gmail, ClickUp, Fireflies, Calendar, Web). |
-| [clickup-sync.md](clickup-sync.md) | Syncs ClickUp Pipeline and Contacts into `memory/people.md`; detects deal-stage changes, verifies critical events via Gmail. |
+Health & energy (personal-use scheduled checks):
+- [`energy-checkin`](generic/energy-checkin/SKILL.md) — 3 daily energy pings via Telegram
+- [`whoop-morning-check`](generic/whoop-morning-check/SKILL.md) — WHOOP recovery → `memory/health.md` + alert
+- [`timing-rebuild`](generic/timing-rebuild/SKILL.md) — rebuild yesterday's Timing.app entries
 
-### Meetings
+Research:
+- [`youtube-analysis`](generic/youtube-analysis/SKILL.md) — transcript → insights → `resources/youtube/`
 
-| Skill | One-line description |
-|-------|----------------------|
-| [meeting-prep.md](meeting-prep.md) | Briefing 30 min before a meeting from Fireflies, ClickUp, Gmail, Calendar, and `people.md`; sent to Telegram. |
-| [meeting-debrief.md](meeting-debrief.md) | 2h after a meeting: Fireflies transcript → debrief → ClickUp tasks → contact timeline. |
-| [calendar-management.md](calendar-management.md) | Rules for working with Google Calendar (color system, event language, recurring blocks, conflict checks, work/non-work intervals); applied on any event create/update via the Calendar MCP. |
+System self-healing & improvement:
+- [`self-heal-diagnose`](generic/self-heal-diagnose/SKILL.md) — L2: classify worker crash from logs
+- [`self-heal-autofix`](generic/self-heal-autofix/SKILL.md) — L3: 8 runbooks (RB-001..RB-008)
+- [`self-improvement-loop`](generic/self-improvement-loop/SKILL.md) — Scan→Evaluate→Spike→Integrate→Measure
+- [`self-upgrade-scan`](generic/self-upgrade-scan/SKILL.md) — daily search for stack upgrades
 
-### Content / research
+Strategist patterns (run at top of each strategist cycle):
+- [`strategist-health-watchdog`](generic/strategist-health-watchdog/SKILL.md) — L1 detect anomalies
+- [`strategist-signal-analysis`](generic/strategist-signal-analysis/SKILL.md) — score → group → opportunities
+- [`strategist-business-analysis`](generic/strategist-business-analysis/SKILL.md) — 5-lens framework
+- [`strategist-blocker-resolution`](generic/strategist-blocker-resolution/SKILL.md) — unblock-attempt → user-request → aging
+- [`strategist-self-improvement`](generic/strategist-self-improvement/SKILL.md) — pattern confidence + meta-review
+- [`strategist-worker-results-analysis`](generic/strategist-worker-results-analysis/SKILL.md) — Reflexion over `result.md`
 
-| Skill | One-line description |
-|-------|----------------------|
-| [youtube-analysis.md](youtube-analysis.md) | Analyzes a YouTube video — extracts transcript, generates insights via Claude, stores result under `resources/youtube/`. |
+### `novo-specific/` — demonstration only
 
+Bound to Novo Studio's mobile-services sales motion (a specific Google Sheet, OUTREACH_PROCESS.md, Funnel sheet, mobile SaaS prospecting). Useful as concrete examples of what a real lead-discovery + outreach pipeline looks like — copy and adapt heavily, don't drop in as-is:
+
+- [`mobile-prospect-discovery`](novo-specific/mobile-prospect-discovery/SKILL.md) — find new SaaS companies (12-source rotation)
+- [`mobile-prospect-scan`](novo-specific/mobile-prospect-scan/SKILL.md) — research existing prospects (App Store, hiring, funding, SDK compliance)
+- [`auto-outreach-draft`](novo-specific/auto-outreach-draft/SKILL.md) — generate cold-outreach draft when Signal Score >= 4
+- [`outreach-trajectory`](novo-specific/outreach-trajectory/SKILL.md) — full 6-8 touch sequence + Funnel rows + reminders
+
+Each Novo-specific SKILL.md begins with a "DEMONSTRATION ONLY" note explaining what you'd need to change for your domain.
+
+## How to enable a skill
+
+1. Pick a skill from `examples/skills/{generic,novo-specific}/<name>/SKILL.md`
+2. Copy the directory to `<repo>/.claude/skills/<name>/`
+3. Claude Code watches `.claude/skills/` live — the skill is available immediately
+4. The skill matches against task content via its `description` and `when_to_use` fields
+
+To use across projects, copy to `~/.claude/skills/<name>/` (user-level).
+
+## Frontmatter cheatsheet
+
+Every skill has YAML frontmatter at the top:
+
+```yaml
 ---
+name: my-skill                   # kebab-case identifier
+description: <required>          # what the skill does + when to match (≤1536 chars total)
+when_to_use: <optional>          # narrower trigger context (was `read_when` in legacy format)
+allowed-tools: Read, Bash, ...   # only what the skill actually uses (whitelist)
+paths: ["memory/**/*.md"]        # only when scoped to specific globs
+context: fork                    # for read-only research skills (run in forked agent)
+agent: Explore                   # paired with context: fork
+disable-model-invocation: true   # for destructive skills — won't auto-trigger, only explicit invocation
+---
+```
 
-## A note on style
+What we applied here:
+- `context: fork` + `agent: Explore` — read-only research skills: `memory-search`, `contact-enrichment`, `event-correlation`, `reply-watchdog`, `telegram-channel-analytics`, `self-heal-diagnose`
+- `disable-model-invocation: true` — skills that mutate shared state (Google Sheets, CRM, launchd services): `clickup-sync`, `self-heal-autofix`, `auto-outreach-draft`, `outreach-trajectory`
+- `paths:` — only for `memory-search` and `reply-watchdog` (file-scoped)
+- Other skills use plain `description` + `allowed-tools` whitelist
+- Dynamic context injection (`!`<cmd>`` blocks) used in `strategist-health-watchdog` and `self-heal-diagnose` for live launchd status
 
-These skills mix Russian prose with English technical nouns. That mirrors how the source operator actually thinks and writes. When adapting, you can:
-- Rewrite Russian → your language as you adapt.
-- Keep technical names (saga-mcp, claude-peers, dispatcher, worker, heartbeat, strategist) unchanged — the rest of the template uses them too.
+## Caveats
 
-## Where to start adapting
+- **Russian content.** All skill bodies are in Russian — the original AgentOS instance was Russian-speaking. Translate as needed.
+- **MCP server dependencies.** Many skills assume specific MCP servers are running:
+  - `claude-peers` (HTTP broker on `:7899`) — for cross-agent messaging to a Telegram operator
+  - `saga-mcp` (`:3851`) — task tracker, see [@novostudiotech/saga-mcp](https://github.com/novostudiotech/saga-mcp)
+  - `telegram-mcp` (`:3848`) — Bot API wrapper for outbound messages
+  - Optional: `claude_ai_Gmail`, `claude_ai_Google_Calendar`, `claude_ai_Fireflies`, `claude_ai_ClickUP` (Composio/Rube-style integrations)
+  - WHOOP MCP (custom, see whoop-morning-check) — only relevant if you have a WHOOP
+- **CLI tool dependencies.** `tdl` (Telegram MTProto client) for telegram-* skills; `yt-dlp` + `youtube-transcript-api` for youtube-analysis; Timing.app + scripts for timing-rebuild; `gh` CLI optional for morning-brief.
+- **Hardcoded paths.** Original skills referenced absolute paths like `$HOME/Workspaces/novostudio/claude/agents/heartbeat/`. These were replaced with `${CLAUDE_PROJECT_DIR}/...` (Claude Code expands this at runtime). Auxiliary scripts (`slim-tdl-export.py`, `youtube-analyze.py`, timing rebuild scripts) are referenced by path but not included in the template — they live in the original repo.
+- **Sheet IDs / list IDs.** Novo-specific skills reference a hardcoded Google Sheet ID and ClickUp list IDs; replace with your own or move to `memory/<service>-config.md`.
+- **Workflow assumption.** These skills assume an AgentOS-style heartbeat dispatcher creates tasks in saga-mcp, picks them up, and routes to workers. They run fine standalone via `Skill` tool invocation as well.
 
-If you want to build your own version of these:
+## Frontmatter validation
 
-1. Pick one workflow that maps to your business (e.g. `gmail-triage` if you live in email).
-2. Copy the skill file into `agents/<your-agent>/skills/<skill>.md`.
-3. Strip references to specific companies, sheets, MCP servers you don't have.
-4. Replace data-source steps with your own connectors.
-5. Test in isolation, then wire it into your dispatcher's `read_when` matching.
+All 31 SKILL.md files have YAML frontmatter that:
+- Includes required `name` and `description`
+- Uses `when_to_use` (renamed from legacy `read_when`)
+- Lists explicit `allowed-tools` (no implicit "everything")
+- Drops legacy `type:` and `trigger:` (replaced by description-driven matching)
+
+Run a quick check:
+```bash
+for f in examples/skills/*/*/SKILL.md; do
+  python3 -c "import sys, yaml; yaml.safe_load(open('$f').read().split('---')[1])" || echo "BAD: $f"
+done
+```
+
+## Source
+
+These were ported from `agents/heartbeat/skills/*.md` in the AgentOS knowledge-base repo. Original format used a different frontmatter (`type:`, `trigger:`, `read_when:`). This port preserves the body content character-for-character and modernizes the frontmatter to the current Claude Code skill spec.
