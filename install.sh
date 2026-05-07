@@ -8,7 +8,9 @@
 #   sudo /tmp/agentos-installer/install.sh
 #
 # Flags:
-#   --minimal                       Skip telegram-mcp + operator (peer-broker + saga + dispatcher only)
+#   --minimal                       Skip operator (saga + dispatcher only).
+#                                   Plugins (claude-peers, telegram) still install
+#                                   but only spawn when an operator-style session runs.
 #   --with=feature-dev,frontend-design  Comma-separated optional plugins to vendor
 #   --non-interactive               Read all wizard answers from preset env vars (CI/automation)
 #   --bootstrap-personal-repo URL   Replace template remote with user's own GitHub fork
@@ -38,7 +40,6 @@ readonly ENV_FILE="${ETC_DIR}/agent-os.env"
 readonly CLAUDE_MANAGED_DIR="/etc/claude-code"
 readonly CLAUDE_MANAGED_FILE="${CLAUDE_MANAGED_DIR}/managed-settings.json"
 readonly CLAUDE_CONFIG_BASE="${STATE_DIR}/claude-config"
-readonly TELEGRAM_DB_DIR="${STATE_DIR}/telegram-mcp"
 
 # Per-agent CLAUDE_CONFIG_DIR (each agent gets its own ~/.claude.json + .credentials.json)
 readonly CC_DIR_OPERATOR="${CLAUDE_CONFIG_BASE}/operator"
@@ -49,9 +50,10 @@ readonly CC_DIR_HEARTBEAT="${CLAUDE_CONFIG_BASE}/heartbeat"
 readonly ANTHROPIC_KEY_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
 
 # Repos to clone. Override TEMPLATE_REPO via --bootstrap-personal-repo.
+# claude-peers and telegram are now vendored as plugins inside the template
+# repo (plugins/claude-peers, plugins/telegram). saga-mcp remains a separate
+# clone — it is a long-running broker, not a plugin.
 TEMPLATE_REPO="https://github.com/try-agent-os/claude-code-template"
-readonly CLAUDE_PEERS_REPO="https://github.com/louislva/claude-peers-mcp"
-readonly TELEGRAM_MCP_REPO="https://github.com/try-agent-os/telegram-mcp"
 readonly SAGA_MCP_REPO="https://github.com/spranab/saga-mcp"
 
 # Defaults
@@ -310,8 +312,14 @@ else
 fi
 
 # Standard dirs
+# NOTE: telegram-mcp's messages.db used to live in a dedicated cwd dir
+# (${STATE_DIR}/telegram-mcp). With the plugin model Claude Code spawns the
+# subprocess with cwd = plugin dir, so the DB ends up alongside plugin code.
+# Open question (flagged in commit message): should we patch the vendored
+# telegram-mcp source to honour ${CLAUDE_PLUGIN_DATA} for its DB path so the
+# DB lives under STATE_DIR? For now we let the plugin write into its own
+# install dir and rely on systemd ReadWritePaths to allow it.
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0755 "$INSTALL_ROOT" "$LOG_DIR" "$STATE_DIR"
-install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0755 "$TELEGRAM_DB_DIR"
 install -d -o root         -g "$AGENT_USER" -m 0750 "$ETC_DIR" "$CLAUDE_MANAGED_DIR"
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CLAUDE_CONFIG_BASE"
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CC_DIR_OPERATOR" "$CC_DIR_DISPATCHER" "$CC_DIR_HEARTBEAT"
@@ -345,12 +353,12 @@ clone_or_pull() {
   fi
 }
 
-clone_or_pull "$TEMPLATE_REPO"     "${INSTALL_ROOT}/claude"
-clone_or_pull "$CLAUDE_PEERS_REPO" "${INSTALL_ROOT}/claude-peers-mcp"
-clone_or_pull "$SAGA_MCP_REPO"     "${INSTALL_ROOT}/saga-mcp"
-if [[ -n "${TG_BOT_TOKEN}" || "${MINIMAL}" == 0 ]]; then
-  clone_or_pull "$TELEGRAM_MCP_REPO" "${INSTALL_ROOT}/telegram-mcp"
-fi
+clone_or_pull "$TEMPLATE_REPO" "${INSTALL_ROOT}/claude"
+clone_or_pull "$SAGA_MCP_REPO" "${INSTALL_ROOT}/saga-mcp"
+
+# claude-peers and telegram are vendored as plugins inside the template repo
+# (plugins/claude-peers, plugins/telegram). No separate clone needed — they
+# come along with TEMPLATE_REPO.
 
 # After cloning the template into INSTALL_ROOT, prefer those template files over
 # whatever directory the script was invoked from (handles curl|bash case).
@@ -360,48 +368,49 @@ if [[ -d "${INSTALL_ROOT}/claude/systemd" ]]; then
 fi
 
 ###############################################################################
-# Step 9 — build MCPs
+# Step 9 — build vendored plugin MCP runtimes + saga-mcp
 ###############################################################################
-step "9/18 build MCPs"
+step "9/18 build plugin MCPs + saga-mcp"
 
 if [[ "$SKIP_BUILD" == 1 ]]; then
   log "  --skip-build: assuming dist/ artefacts already present"
 else
+  # claude-peers plugin (bun, no build step — server.ts auto-bootstraps broker)
+  if [[ -d "${INSTALL_ROOT}/claude/plugins/claude-peers" ]]; then
+    log "Installing claude-peers plugin Bun deps..."
+    sudo -u "$AGENT_USER" bash -c "cd ${INSTALL_ROOT}/claude/plugins/claude-peers && ${BUN_PATH} install"
+  fi
+
+  # telegram plugin (node + whisper.cpp build + model download)
+  if [[ -d "${INSTALL_ROOT}/claude/plugins/telegram" ]]; then
+    log "Installing telegram plugin npm deps + building whisper..."
+    sudo -u "$AGENT_USER" bash -c "cd ${INSTALL_ROOT}/claude/plugins/telegram && /usr/bin/npm ci && /usr/bin/npm run build"
+
+    sudo -u "$AGENT_USER" bash <<EOF
+set -euo pipefail
+cd "${INSTALL_ROOT}/claude/plugins/telegram"
+WMODELS=node_modules/nodejs-whisper/cpp/whisper.cpp/models
+WBUILD=node_modules/nodejs-whisper/cpp/whisper.cpp/build
+if [[ -d \$WMODELS ]]; then
+  if [[ ! -f "\$WMODELS/ggml-${WHISPER_MODEL}.bin" ]]; then
+    ( cd "\$WMODELS" && bash download-ggml-model.sh "${WHISPER_MODEL}" )
+  fi
+  if [[ ! -x "\$WBUILD/bin/whisper-cli" ]]; then
+    ( cd node_modules/nodejs-whisper/cpp/whisper.cpp \
+        && cmake -B build && cmake --build build -j --config Release )
+  fi
+fi
+EOF
+  fi
+
+  # saga-mcp (node + tsc) — separate broker, not a plugin
   sudo -u "$AGENT_USER" bash <<EOF
 set -euo pipefail
-export PATH="${AGENT_HOME}/.bun/bin:\$PATH"
-
-# claude-peers-mcp (bun, no build step)
-cd "${INSTALL_ROOT}/claude-peers-mcp"
-bun install --frozen-lockfile 2>/dev/null || bun install
-
-# saga-mcp (node + tsc)
 cd "${INSTALL_ROOT}/saga-mcp"
 if [[ ! -d node_modules ]] || [[ package.json -nt node_modules/.package-lock.json ]]; then
   npm ci --no-audit --no-fund
 fi
 [[ -f dist/index.js ]] || npm run build
-
-# telegram-mcp (node + whisper.cpp build + model download)
-if [[ -d "${INSTALL_ROOT}/telegram-mcp" ]]; then
-  cd "${INSTALL_ROOT}/telegram-mcp"
-  if [[ ! -d node_modules ]] || [[ package.json -nt node_modules/.package-lock.json ]]; then
-    npm ci --no-audit --no-fund
-  fi
-  [[ -f dist/index.js ]] || npm run build
-
-  WMODELS=node_modules/nodejs-whisper/cpp/whisper.cpp/models
-  WBUILD=node_modules/nodejs-whisper/cpp/whisper.cpp/build
-  if [[ -d \$WMODELS ]]; then
-    if [[ ! -f "\$WMODELS/ggml-${WHISPER_MODEL}.bin" ]]; then
-      ( cd "\$WMODELS" && bash download-ggml-model.sh "${WHISPER_MODEL}" )
-    fi
-    if [[ ! -x "\$WBUILD/bin/whisper-cli" ]]; then
-      ( cd node_modules/nodejs-whisper/cpp/whisper.cpp \
-          && cmake -B build && cmake --build build -j --config Release )
-    fi
-  fi
-fi
 EOF
 fi
 
@@ -432,18 +441,16 @@ render_unit() {
   chmod 0644 "$dest"
 }
 
-for unit in agent-os-claude-peers.service \
-            agent-os-saga.service \
+for unit in agent-os-saga.service \
             agent-os-dispatcher.service \
             agent-os-dispatcher.timer \
-            agent-os-operator.service \
-            agent-os-telegram.service ; do
+            agent-os-operator.service ; do
   src="${TEMPLATE_DIR}/systemd/${unit}"
   if [[ ! -f "$src" ]]; then
     warn "  template missing: $src — skipping"
     continue
   fi
-  if [[ "${MINIMAL}" == 1 ]] && [[ "$unit" == "agent-os-telegram.service" || "$unit" == "agent-os-operator.service" ]]; then
+  if [[ "${MINIMAL}" == 1 ]] && [[ "$unit" == "agent-os-operator.service" ]]; then
     log "  --minimal: skipping $unit"
     continue
   fi
@@ -478,7 +485,8 @@ umask 077
   echo "# --- AgentOS state paths ---"
   echo "DB_PATH=${STATE_DIR}/saga.db"
   echo "CLAUDE_PEERS_DB=${STATE_DIR}/claude-peers.db"
-  echo "TELEGRAM_MCP_DB=${TELEGRAM_DB_DIR}/messages.db"
+  # NOTE: telegram plugin's messages.db lives inside the plugin install dir
+  # (resolved by Claude Code via plugin discovery). No env path needed.
   echo
   echo "# --- Optional ---"
   echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
@@ -500,7 +508,6 @@ log "  wrote ${ENV_FILE}"
 step "12/18 per-agent claude config"
 
 CLAUDE_CFG_TPL="${TEMPLATE_DIR}/.claude-config.template.json"
-MCP_TPL="${TEMPLATE_DIR}/.mcp.json.template"
 
 if [[ ! -f "$CLAUDE_CFG_TPL" ]]; then
   fail ".claude-config.template.json not found in ${TEMPLATE_DIR}"
@@ -521,22 +528,7 @@ render_user_claude_json() {
 render_user_claude_json "$CC_DIR_OPERATOR"
 render_user_claude_json "$CC_DIR_DISPATCHER"
 render_user_claude_json "$CC_DIR_HEARTBEAT"
-log "  per-agent ~/.claude.json (HTTP MCPs: claude-peers + saga) rendered for operator/dispatcher/heartbeat"
-
-# Operator project-scope .mcp.json — adds telegram (stdio, channel push)
-if [[ "${MINIMAL}" == 0 && -f "$MCP_TPL" ]]; then
-  OP_PROJECT_DIR="${INSTALL_ROOT}/claude/agents/operator"
-  if [[ -d "$OP_PROJECT_DIR" ]]; then
-    sed \
-      -e "s|\${INSTALL_ROOT}|${INSTALL_ROOT}|g" \
-      -e "s|\${TG_BOT_TOKEN}|${TG_BOT_TOKEN:-}|g" \
-      -e "s|\${TELEGRAM_USER_ID}|${TG_USER_ID:-}|g" \
-      "$MCP_TPL" > "${OP_PROJECT_DIR}/.mcp.json"
-    chown "$AGENT_USER:$AGENT_USER" "${OP_PROJECT_DIR}/.mcp.json"
-    chmod 0640 "${OP_PROJECT_DIR}/.mcp.json"
-    log "  operator project .mcp.json (telegram stdio) rendered"
-  fi
-fi
+log "  per-agent ~/.claude.json (saga-mcp SSE only; claude-peers + telegram via plugin discovery) rendered for operator/dispatcher/heartbeat"
 
 ###############################################################################
 # Step 13 — managed-settings.json (org-wide claude-code policy)
@@ -607,9 +599,13 @@ fi
 ###############################################################################
 step "17/18 enable + start units"
 
-UNITS=(agent-os-claude-peers.service agent-os-saga.service agent-os-dispatcher.timer)
+# NOTE: claude-peers + telegram no longer have dedicated systemd units —
+# they are stdio MCP plugins, spawned by Claude Code itself per session.
+# claude-peers' broker daemon is auto-bootstrapped from server.ts on first
+# spawn (see plugins/claude-peers/server.ts).
+UNITS=(agent-os-saga.service agent-os-dispatcher.timer)
 if [[ "${MINIMAL}" == 0 ]]; then
-  UNITS+=(agent-os-telegram.service agent-os-operator.service)
+  UNITS+=(agent-os-operator.service)
 fi
 
 systemctl enable --now "${UNITS[@]}"
@@ -632,13 +628,8 @@ verify_unit() {
 
 for u in "${UNITS[@]}"; do verify_unit "$u"; done
 
-# HTTP MCPs
-if curl -fsS --max-time 3 http://127.0.0.1:7899/health >/dev/null 2>&1; then
-  log "  [OK] claude-peers broker responding on :7899"
-else
-  warn "  [WARN] claude-peers /health did not respond — check journalctl -u agent-os-claude-peers"
-fi
-
+# saga-mcp HTTP probe (claude-peers broker comes up only when the first plugin
+# session spawns — no probe at install time)
 if curl -fsS --max-time 3 http://127.0.0.1:3851/health >/dev/null 2>&1 \
   || curl -fsS --max-time 3 http://127.0.0.1:3851/ >/dev/null 2>&1; then
   log "  [OK] saga-mcp responding on :3851"
@@ -693,6 +684,6 @@ cat <<EOF
   Operator tmux: sudo -u ${AGENT_USER} tmux attach -t operator
   Dispatcher:    journalctl -u agent-os-dispatcher.service -f
 
-  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher,claude-peers,saga-mcp,telegram-mcp}.log
+  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher,saga-mcp}.log
 ========================================================================
 EOF

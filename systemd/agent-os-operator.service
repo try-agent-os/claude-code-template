@@ -1,8 +1,10 @@
 [Unit]
 Description=AgentOS operator (Claude Code in tmux, channel-pushed)
 Documentation=https://github.com/try-agent-os/claude-code-template
-After=network-online.target agent-os-claude-peers.service agent-os-telegram.service
-Wants=network-online.target agent-os-claude-peers.service agent-os-telegram.service
+# claude-peers + telegram are now stdio MCP plugins spawned per session by
+# Claude Code itself — no upstream systemd unit dependency.
+After=network-online.target agent-os-saga.service
+Wants=network-online.target agent-os-saga.service
 
 [Service]
 Type=forking
@@ -18,8 +20,7 @@ ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agen
   'claude --dangerously-skip-permissions \
     --add-dir {INSTALL_ROOT}/claude/memory \
     --add-dir {INSTALL_ROOT}/claude/agents \
-    --dangerously-load-development-channels server:claude-peers \
-    --dangerously-load-development-channels server:telegram'
+    --channels plugin:claude-peers@agentos plugin:telegram@agentos'
 ExecStop=/usr/bin/tmux kill-session -t operator
 Restart=on-failure
 RestartSec=30

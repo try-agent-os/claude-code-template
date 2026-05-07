@@ -38,13 +38,16 @@ UNITS=(
   agent-os-dispatcher.timer
   agent-os-dispatcher.service
   agent-os-operator.service
-  agent-os-telegram.service
   agent-os-saga.service
+)
+# Legacy units (pre-plugin-migration). Kept here for cleanup on upgrade.
+LEGACY_UNITS=(
+  agent-os-telegram.service
   agent-os-claude-peers.service
 )
 
 log "stopping + disabling units"
-for u in "${UNITS[@]}"; do
+for u in "${UNITS[@]}" "${LEGACY_UNITS[@]}"; do
   if systemctl list-unit-files "$u" >/dev/null 2>&1; then
     systemctl stop    "$u" 2>/dev/null || true
     systemctl disable "$u" 2>/dev/null || true
@@ -52,7 +55,7 @@ for u in "${UNITS[@]}"; do
 done
 
 log "removing unit files"
-for u in "${UNITS[@]}"; do
+for u in "${UNITS[@]}" "${LEGACY_UNITS[@]}"; do
   rm -f "/etc/systemd/system/$u"
 done
 systemctl daemon-reload

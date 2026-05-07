@@ -13,8 +13,17 @@
   "forceLoginMethod": "claudeai",
 
   "allowedChannelPlugins": [
-    "claude-peers",
-    "telegram"
+    "claude-peers@agentos",
+    "telegram@agentos"
+  ],
+
+  "enabledPlugins": [
+    "claude-peers@agentos",
+    "telegram@agentos",
+    "agent-sdk-dev@anthropic",
+    "code-review@anthropic",
+    "commit-commands@anthropic",
+    "security-guidance@anthropic"
   ],
 
   "permissions": {

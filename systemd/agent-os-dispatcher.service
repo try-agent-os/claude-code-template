@@ -1,9 +1,11 @@
 [Unit]
 Description=AgentOS heartbeat dispatcher (one-shot, fired by .timer)
 Documentation=https://github.com/try-agent-os/claude-code-template
-After=network-online.target agent-os-claude-peers.service agent-os-saga.service
+# claude-peers is now a stdio MCP plugin spawned per session by Claude Code
+# itself — no upstream systemd unit dependency.
+After=network-online.target agent-os-saga.service
 Wants=network-online.target
-Requires=agent-os-claude-peers.service agent-os-saga.service
+Requires=agent-os-saga.service
 
 [Service]
 Type=oneshot
