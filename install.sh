@@ -136,7 +136,14 @@ step() { CURRENT_STEP="$1"; log "==> $1"; }
 ###############################################################################
 # State file — non-secret answers persisted between runs
 ###############################################################################
-STATE_FILE="/etc/agent-os/install.state.json"
+# On macOS we run as the user (no sudo), so /etc/agent-os/ is unwritable; persist
+# under the user's home next to DEPLOY_STATE. On Linux the canonical install runs
+# as root, so /etc/agent-os/install.state.json stays the system-wide source of truth.
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  STATE_FILE="$HOME/.agent-os-deploy/install.state.json"
+else
+  STATE_FILE="/etc/agent-os/install.state.json"
+fi
 
 # Read a value from state file (returns "" if absent)
 state_get() {

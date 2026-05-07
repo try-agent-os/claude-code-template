@@ -8,6 +8,7 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ### Fixed
 - `install.sh` — `ssh_config_add_alias` now rewrites stale Host entry on reprovision (was: silently kept old IP, causing `wait_until_ssh_ready` to hang on dead droplet).
+- `install.sh` — `STATE_FILE` is now Mac-aware. On Darwin (wizard runs as user, no sudo) it writes to `$HOME/.agent-os-deploy/install.state.json` next to `DEPLOY_STATE`; on Linux (root install) it stays at `/etc/agent-os/install.state.json`. Previously the Mac wizard spammed `mkdir: /etc/agent-os: Permission denied` on every `ask` prompt and never persisted answers across re-runs (resume was effectively broken).
 
 ### Changed
 - Docs: README now documents git-clone install (Method A) as the recommended path; curl one-liner kept as Method B.
