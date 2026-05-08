@@ -69,8 +69,13 @@ You should see:
 To peek at what the operator is doing:
 
 ```bash
-sudo -u agent-os tmux attach -t operator
-# Ctrl+B then D to detach without killing
+# The operator service runs with PrivateTmp=yes for hardening, so its tmux
+# socket lives inside a private /tmp namespace — `sudo -u agent-os tmux
+# attach` from your shell will report "no sessions" even though the operator
+# is healthy. Enter the unit's mount namespace first:
+sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)" -m -- \
+  sudo -u agent-os tmux attach -t operator
+# Ctrl+B then D to detach without killing.
 ```
 
 ## Next steps

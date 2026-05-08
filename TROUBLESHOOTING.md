@@ -163,7 +163,25 @@ Yes. The channel-push gate that blocks `plugin:` channels is enterprise-only —
 journalctl -u agent-os-operator.service     # systemd unit log
 ```
 
-Inside operator's tmux session: `sudo -u agent-os tmux attach -t operator` (use `Ctrl+B D` to detach without killing).
+Inside operator's tmux session: `sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)" -m -- sudo -u agent-os tmux attach -t operator` (use `Ctrl+B D` to detach without killing). The plain `sudo -u agent-os tmux attach -t operator` does not work — see "tmux attach says 'no sessions'" below.
+
+## `tmux attach -t operator` says "no sessions" but service is active
+
+### Symptom
+`systemctl is-active agent-os-operator.service` prints `active`, the unit's tmux server PID is alive (`systemctl show -p MainPID --value agent-os-operator.service`), but `sudo -u agent-os tmux attach -t operator` reports `no sessions` or `error connecting to /tmp/tmux-997/default (No such file or directory)`.
+
+### Root cause
+The operator unit runs with `PrivateTmp=yes`, which gives it an isolated `/tmp` mount namespace for hardening. tmux puts its socket at `/tmp/tmux-$UID/default` — but inside the unit's namespace, not the one your shell sees.
+
+### Fix
+Enter the operator unit's mount namespace before invoking tmux:
+
+```bash
+sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)" -m -- \
+  sudo -u agent-os tmux attach -t operator
+```
+
+`Ctrl+B D` to detach. To peek without attaching, swap `attach -t operator` for `capture-pane -t operator -p`.
 
 ## Still broken?
 

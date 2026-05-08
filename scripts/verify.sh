@@ -54,10 +54,30 @@ MODE_FIX=0
 JSON_EVENTS=""
 
 # Project dir resolution
+#
+# Order: explicit env var > script-relative repo root > current working dir.
+# The script lives at <repo>/scripts/verify.sh, so the parent of the script's
+# directory is the repo root in any standard install. Walking up from the
+# script's location lets `sudo bash /opt/agent-os/claude/scripts/verify.sh`
+# work without the caller having to export CLAUDE_PROJECT_DIR — previously
+# the pwd fallback resolved PROJECT_DIR to /root and every plugin/hooks check
+# emitted a misleading FAIL/WARN against paths that never existed.
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
   PROJECT_DIR="$CLAUDE_PROJECT_DIR"
 else
-  PROJECT_DIR="$(pwd)"
+  _verify_self="${BASH_SOURCE[0]:-$0}"
+  if [ -f "$_verify_self" ]; then
+    _verify_self_dir="$(cd "$(dirname -- "$_verify_self")" 2>/dev/null && pwd)"
+    if [ -n "${_verify_self_dir:-}" ] && [ -d "${_verify_self_dir}/../plugins" ]; then
+      PROJECT_DIR="$(cd "${_verify_self_dir}/.." && pwd)"
+    else
+      PROJECT_DIR="$(pwd)"
+    fi
+    unset _verify_self_dir
+  else
+    PROJECT_DIR="$(pwd)"
+  fi
+  unset _verify_self
 fi
 
 # OS detection
