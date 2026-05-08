@@ -21,13 +21,11 @@ jobs:
         # (literal display strings), SC2029 SSH expand-on-client (intentional),
         # SC2016 single-quoted echo (intentional template strings).
         run: |
-          shellcheck \
-            -e SC2155,SC2086,SC1090,SC1091,SC2034,SC2001,SC2088,SC2029,SC2016 \
+          shellcheck --severity=error \
             install.sh uninstall.sh
       - name: Lint agent scripts
         run: |
-          shellcheck \
-            -e SC2155,SC2086,SC1090,SC1091,SC2034,SC2001,SC2088,SC2029,SC2016 \
+          shellcheck --severity=error \
             agents/heartbeat/dispatcher.sh \
             agents/operator/start.sh \
             scripts/verify.sh
