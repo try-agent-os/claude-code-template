@@ -43,6 +43,66 @@ The whole stack is three concentric layers, each with a different lifetime:
 
 The key inversion vs naive designs: **claude-peers and telegram are not separate services**. They are stdio MCP plugins that Claude Code spawns per session via plugin discovery. The only state that needs to survive between sessions — the peers broker — is a daemon auto-spawned from `plugins/claude-peers/server.ts` on first plugin instantiation, listening on `:7899`. saga-mcp remains a standalone broker because it serves multiple unrelated Claude Code sessions and benefits from HTTP reconnect with backoff (stdio MCP servers are not auto-reconnected by Claude Code — see [03-mcp-hooks-channels.md §1](https://github.com/try-agent-os/claude-code-template) for the spec details).
 
+### 1.5 Component diagram (mermaid — renders on GitHub)
+
+```mermaid
+flowchart TB
+    subgraph systemd["systemd (Tier 3)"]
+        saga[agent-os-saga.service<br/>node SSE :3851]
+        tg[agent-os-telegram-mcp.service<br/>node SSE :3848]
+        op[agent-os-operator.service<br/>tmux + claude]
+        disp[agent-os-dispatcher.timer<br/>every 45min]
+    end
+
+    subgraph claude["Claude Code processes (Tier 2)"]
+        opclaude[claude operator session<br/>--dangerously-load-development-channels<br/>server:telegram server:claude-peers]
+    end
+
+    subgraph mcp["MCP layer (Tier 1)"]
+        peers[claude-peers stdio plugin<br/>broker auto-spawn :7899]
+        tgmcp[telegram-mcp HTTP/SSE<br/>long-poll Bot API]
+        sagamcp[saga-mcp HTTP/SSE<br/>SQLite tracker]
+    end
+
+    subgraph external["External"]
+        tgapi[Telegram Bot API]
+        anthapi[api.anthropic.com]
+        users((Users))
+    end
+
+    op -->|spawns tmux| opclaude
+    opclaude -->|stdio| peers
+    opclaude -->|SSE| tgmcp
+    opclaude -->|SSE| sagamcp
+    tgmcp <-->|long-poll| tgapi
+    opclaude <-->|API| anthapi
+    users <-->|messages| tgapi
+    tgmcp -.channel push.-> opclaude
+```
+
+### 1.6 Incoming-message dataflow
+
+```mermaid
+sequenceDiagram
+    actor User as User in Telegram
+    participant TG as Telegram Bot API
+    participant TGMCP as telegram-mcp<br/>(SSE :3848)
+    participant Claude as operator<br/>claude session
+    participant API as api.anthropic.com
+
+    User->>TG: send message
+    TG-->>TGMCP: getUpdates long-poll
+    TGMCP->>TGMCP: persist to messages.db<br/>check users.status='allowed'
+    TGMCP-->>Claude: notifications/claude/channel<br/>(SSE push to activeSessions)
+    Claude->>API: POST /v1/messages
+    API-->>Claude: response text
+    Claude->>TGMCP: mcp__telegram__send_message
+    TGMCP->>TG: sendMessage
+    TG->>User: bot reply
+```
+
+The two diagrams above are intentionally simplified for at-a-glance comprehension. The ASCII diagrams below are the canonical, annotated reference.
+
 ---
 
 ## 2. Component diagram
