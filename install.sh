@@ -2265,32 +2265,68 @@ mark_step_completed 18
 # Default-on for fresh installs because public-internet droplets without a
 # firewall + fail2ban are how SSH brute-force compromises happen on day 1.
 # Skip with --no-firewall for environments that manage their own iptables.
+#
+# IMPORTANT: previously used `ufw limit ssh/tcp` which rate-limits SSH to 6
+# connections per 30s per source IP. Combined with fail2ban's default jail,
+# normal post-install SSH polling (status checks, Mac wizard re-runs) tripped
+# the limiter and fail2ban'd the user's own IP for 10+ minutes. We now:
+#   1. Use plain `ufw allow ssh/tcp` (fail2ban handles brute-force).
+#   2. Detect the installer's source IP from $SSH_CLIENT and ADD it to
+#      fail2ban's ignoreip allowlist before enabling the jail.
+#   3. Print a banner so the operator knows what just happened.
 if [[ "${NO_FIREWALL:-0}" != 1 ]]; then
   step "extra: ingress hardening (UFW + fail2ban)"
 
-  # UFW — allow SSH (with rate limit), deny everything else inbound.
-  # Outgoing left default-allow; the strict --harden step below tightens that
-  # for users who want it.
+  # Detect installer source IP for fail2ban allowlist.
+  # SSH_CLIENT format: "<client-ip> <client-port> <server-port>"
+  # SSH_CONNECTION format: "<client-ip> <client-port> <server-ip> <server-port>"
+  # Fall back to empty if neither is set (e.g. running locally on console).
+  INSTALLER_SOURCE_IP=""
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    INSTALLER_SOURCE_IP="${SSH_CLIENT%% *}"
+  elif [[ -n "${SSH_CONNECTION:-}" ]]; then
+    INSTALLER_SOURCE_IP="${SSH_CONNECTION%% *}"
+  fi
+  # Validate it looks like an IPv4/IPv6 address; reject anything weird.
+  if [[ -n "$INSTALLER_SOURCE_IP" ]]; then
+    if ! [[ "$INSTALLER_SOURCE_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && \
+       ! [[ "$INSTALLER_SOURCE_IP" =~ : ]]; then
+      warn "  ignoring suspicious SSH_CLIENT IP: $INSTALLER_SOURCE_IP"
+      INSTALLER_SOURCE_IP=""
+    fi
+  fi
+
+  # UFW — allow SSH unconditionally, deny everything else inbound.
+  # `ufw limit` removed — too aggressive for normal status polling.
   if command -v ufw >/dev/null 2>&1; then
     ufw default deny incoming >/dev/null
     ufw default allow outgoing >/dev/null
-    ufw limit ssh/tcp >/dev/null         # rate-limits brute-force at the firewall
+    ufw allow ssh/tcp >/dev/null
     # Note: telegram-mcp (3848), saga-mcp (3851), peers broker (7899) bind to
     # 127.0.0.1 by default — no inbound rule needed.
     ufw --force enable >/dev/null
-    log "  ufw: default deny incoming, allow ssh (rate-limited)"
+    log "  ufw: default deny incoming, allow ssh (no rate limit; fail2ban handles brute-force)"
   else
     warn "  ufw not installed — skipping firewall (apt install ufw)"
   fi
 
-  # fail2ban — sshd jail, default 5 retries → 10 min ban.
+  # fail2ban — sshd jail, default 5 retries → 10 min ban. Allowlist installer IP.
   if ! command -v fail2ban-client >/dev/null 2>&1; then
     apt-get install -y -qq fail2ban >/dev/null 2>&1 || true
   fi
   if command -v fail2ban-client >/dev/null 2>&1; then
     install -d -m 0755 /etc/fail2ban/jail.d
-    cat > /etc/fail2ban/jail.d/agent-os.local <<'F2BEOF'
+    # Build ignoreip line: always include localhost, add installer IP if known.
+    F2B_IGNOREIP="127.0.0.1/8 ::1"
+    if [[ -n "$INSTALLER_SOURCE_IP" ]]; then
+      F2B_IGNOREIP="$F2B_IGNOREIP $INSTALLER_SOURCE_IP"
+    fi
+    cat > /etc/fail2ban/jail.d/agent-os.local <<F2BEOF
 # AgentOS baseline jail. Tighten settings if your droplet sees abuse.
+[DEFAULT]
+# Installer source IP allowlisted to prevent self-lockout during status polling.
+ignoreip = ${F2B_IGNOREIP}
+
 [sshd]
 enabled = true
 maxretry = 5
@@ -2298,10 +2334,29 @@ findtime = 10m
 bantime = 10m
 F2BEOF
     systemctl enable --now fail2ban >/dev/null 2>&1 || true
-    log "  fail2ban: sshd jail enabled (5 retries / 10m ban)"
+    if [[ -n "$INSTALLER_SOURCE_IP" ]]; then
+      log "  fail2ban: sshd jail enabled (5 retries / 10m ban; allowlisted ${INSTALLER_SOURCE_IP})"
+    else
+      log "  fail2ban: sshd jail enabled (5 retries / 10m ban; no installer IP detected)"
+    fi
   else
     warn "  fail2ban not installed — skipping (apt install fail2ban)"
   fi
+
+  # Hardening banner — surfaces the most common foot-gun.
+  cat <<'BANNER'
+
+  +-----------------------------------------------------------------+
+  | Ingress hardening enabled (UFW + fail2ban).                     |
+  |                                                                 |
+  | If you reconnect from a NEW IP and SSH fails after 5 attempts,  |
+  | wait 10 min for the ban to expire, OR ssh in from the original  |
+  | IP and run:                                                     |
+  |     sudo fail2ban-client unban <your-new-ip>                    |
+  |                                                                 |
+  | Disable hardening on next install with: install.sh --no-firewall|
+  +-----------------------------------------------------------------+
+BANNER
 fi
 
 ###############################################################################
