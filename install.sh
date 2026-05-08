@@ -1297,6 +1297,14 @@ EOF
   info "Live output below — also tee'd to $DEPLOY_STATE_DIR/$SSH_ALIAS.log"
 
   # Pass all wizard answers as env vars; install.sh resumes from state.json on remote
+  # Pass user repo URL + auto-sync setting through to install.sh on the VPS
+  # so Step 8 clones /opt/agent-os/claude from the user's fork (via deploy
+  # key, already installed in Step 4e) rather than the public template, and
+  # so the cron auto-sync step gets wired if AUTO_SYNC_VPS=1.
+  local BOOTSTRAP_FLAG=""
+  if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
+    BOOTSTRAP_FLAG="--bootstrap-personal-repo='${USER_REPO_URL}'"
+  fi
   ssh "$SSH_ALIAS" "cd /tmp/agentos && \
       PROJECT_NAME='$PROJECT_NAME' \
       GIT_REMOTE='$GIT_REMOTE' \
@@ -1307,7 +1315,8 @@ EOF
       TG_ADMIN_USER_IDS='$TG_ADMIN_USER_IDS' \
       TG_ADMIN_USERNAMES='$TG_ADMIN_USERNAMES' \
       CLAUDE_CODE_OAUTH_TOKEN='$CLAUDE_CODE_OAUTH_TOKEN' \
-      sudo -E bash install.sh --non-interactive" 2>&1 | tee "$DEPLOY_STATE_DIR/$SSH_ALIAS.log"
+      AUTO_SYNC_VPS='${AUTO_SYNC_VPS:-0}' \
+      sudo -E bash install.sh --non-interactive ${BOOTSTRAP_FLAG}" 2>&1 | tee "$DEPLOY_STATE_DIR/$SSH_ALIAS.log"
   local install_exit=${PIPESTATUS[0]}
 
   if [[ $install_exit -ne 0 ]]; then
