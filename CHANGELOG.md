@@ -6,6 +6,12 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Added
+- `agents/operator/.claude/hooks/log-tool-use.sh` — async PostToolUse hook that appends a TSV audit line for every tool call to `$AGENTOS_HOOKS_LOG_DIR/operator-tool-calls.log`. Because operator runs with `--dangerously-skip-permissions` there are no interactive permission checkpoints; this hook is the primary visibility mechanism for what the agent did during a session.
+- `agents/operator/.claude/hooks/permission-allow.sh` — PermissionRequest hook that auto-allows every tool call. Belt-and-suspenders alongside `--dangerously-skip-permissions` for the case where the agent is started without the CLI flag. Exits early (no decision emitted) when the mode is already `bypassPermissions`; otherwise logs the unexpected request and returns `behavior: allow`.
+- `agents/operator/.claude/settings.json` — wired the two new hooks: `PostToolUse` (async, matcher `""`) for `log-tool-use.sh` and `PermissionRequest` (matcher `""`) for `permission-allow.sh`.
+- `ARCHITECTURE.md` — new section "12. Operator autonomy — headless permission strategy" documenting all five defence layers, trade-off table, and rationale for choosing `--dangerously-skip-permissions` as primary with hook-based logging for auditability.
+
 ### Fixed
 - `install.sh` — `ssh_config_add_alias` now rewrites stale Host entry on reprovision (was: silently kept old IP, causing `wait_until_ssh_ready` to hang on dead droplet).
 - `install.sh` — `STATE_FILE` is now Mac-aware. On Darwin (wizard runs as user, no sudo) it writes to `$HOME/.agent-os-deploy/install.state.json` next to `DEPLOY_STATE`; on Linux (root install) it stays at `/etc/agent-os/install.state.json`. Previously the Mac wizard spammed `mkdir: /etc/agent-os: Permission denied` on every `ask` prompt and never persisted answers across re-runs (resume was effectively broken).

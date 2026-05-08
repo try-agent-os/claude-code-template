@@ -424,6 +424,69 @@ The intended surface area for `--minimal` is documented in [`.claude/README.md`]
 
 ---
 
+## 12. Operator autonomy — headless permission strategy
+
+The operator agent runs 24/7 on a VPS with no human present. Any interactive permission prompt causes an indefinite freeze. The template applies a layered defence so the operator never blocks:
+
+### Layer 1 — CLI flag (primary)
+
+The systemd unit launches claude with `--dangerously-skip-permissions`. This sets the runtime permission mode to `bypassPermissions`, which makes Claude Code skip every tool-use permission check. It is the strongest and most reliable bypass.
+
+```
+ExecStart=/usr/bin/tmux new-session -d -s operator ... \
+  'claude --dangerously-skip-permissions ...'
+```
+
+### Layer 2 — First-run TUI dialogs (pre-accepted)
+
+Without pre-acceptance, claude shows interactive dialogs on first launch even with `--dangerously-skip-permissions`. The installer pre-fills `${CLAUDE_CONFIG_DIR}/. claude.json` with four flags to suppress them:
+
+| Key | Dialog it skips |
+|-----|-----------------|
+| `hasCompletedOnboarding: true` | Onboarding flow |
+| `bypassPermissionsModeAccepted: true` | "Bypass permissions" warning |
+| `hasInitialThemeSetup: true` | Theme picker |
+| `hasCompletedAuthSetup: true` | Auth setup screen |
+
+Per-project trust dialogs are suppressed via `projects.<cwd>.hasTrustDialogAccepted: true` for each agent directory.
+
+### Layer 3 — User-scope settings (belt-and-suspenders)
+
+`${CLAUDE_CONFIG_DIR}/settings.json` (rendered from `.claude-settings.template.json`) sets:
+
+- `skipDangerousModePermissionPrompt: true` — disables the startup warning that `--dangerously-skip-permissions` triggers.
+- `permissions.allow: ["mcp__*", "Bash", "Read", "Write", ...]` — covers the case where the agent is started without the CLI flag (e.g. during a manual test run).
+
+### Layer 4 — PermissionRequest hook (fallback auto-allow)
+
+`agents/operator/.claude/hooks/permission-allow.sh` is wired as a `PermissionRequest` hook. It auto-allows every tool call if the permission mode is not already `bypassPermissions`. This fires only if layers 1–3 somehow fail to suppress a prompt.
+
+The hook logs any unexpected permission requests to `$AGENTOS_HOOKS_LOG_DIR/operator-permission.log` for post-mortem inspection.
+
+### Layer 5 — PostToolUse audit log
+
+Because `--dangerously-skip-permissions` eliminates interactive checkpoints, visibility into what the operator actually does is important. `agents/operator/.claude/hooks/log-tool-use.sh` is a `PostToolUse` async hook that writes a TSV line for every tool call:
+
+```
+2026-05-08T07:40:00Z   <session>   Bash   {"command":"git status"}
+```
+
+Logs land in `$AGENTOS_HOOKS_LOG_DIR/operator-tool-calls.log` (default `/tmp/agentos-hooks/` on VPS; controlled by `AGENTOS_HOOKS_LOG_DIR` in `agent-os.env`).
+
+### Trade-off summary
+
+| Approach | Blast radius | Used |
+|----------|-------------|------|
+| `--dangerously-skip-permissions` | Operator can call any tool — mitigated by VPS egress firewall (`--harden`) and sandbox | ✓ Primary |
+| `permissions.allow` in settings | Same tools, but only for listed patterns | ✓ Belt-and-suspenders |
+| `PermissionRequest` auto-allow hook | Same as `--dangerously-skip-permissions` when hook fires | ✓ Fallback |
+| `--permission-mode auto` | Not a real claude flag (not documented in CLI help) | — |
+| PreToolUse `permissionDecision: "allow"` hook | Hooks are not called in `bypassPermissions` mode | — |
+
+The `--harden` installer flag (UFW egress firewall) is the recommended complementary control — it limits network blast radius even if the agent is tricked into running unexpected commands.
+
+---
+
 ## Further reading
 
 - [`.claude/README.md`](./.claude/README.md) — settings cascade specifics
