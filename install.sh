@@ -2184,6 +2184,54 @@ systemctl enable --now "${UNITS[@]}"
 mark_step_completed 17
 
 ###############################################################################
+# Step 17.5 — auto-sync cron (saga #814 dual-deployment)
+#
+# If the user provisioned a personal repo + opted into auto-sync, install a
+# cron job that pulls from the user's fork every 5 minutes. The deploy key
+# (per-droplet, dropped into /root/.ssh/agentos_deploy_key by the Mac wizard)
+# is shared with agent-os via a copy in /home/agent-os/.ssh/.
+###############################################################################
+if [[ "${AUTO_SYNC_VPS:-0}" == 1 ]] \
+   && [[ -f /root/.ssh/agentos_deploy_key ]] \
+   && [[ -d "${INSTALL_ROOT}/claude/.git" ]]; then
+  step "17.5/18 auto-sync cron (saga #814)"
+
+  # Share the deploy key with agent-os so cron-as-agent-os can git pull.
+  install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0700 "${AGENT_HOME}/.ssh"
+  if [[ ! -f "${AGENT_HOME}/.ssh/agentos_deploy_key" ]]; then
+    install -m 0600 -o "$AGENT_USER" -g "$AGENT_USER" \
+      /root/.ssh/agentos_deploy_key "${AGENT_HOME}/.ssh/agentos_deploy_key"
+  fi
+  if ! grep -q "agentos_deploy_key" "${AGENT_HOME}/.ssh/config" 2>/dev/null; then
+    sudo -u "$AGENT_USER" tee -a "${AGENT_HOME}/.ssh/config" >/dev/null <<EOF
+
+# AgentOS deploy key (saga #814 — auto-sync from user's fork)
+Host github.com
+  IdentityFile ${AGENT_HOME}/.ssh/agentos_deploy_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
+    chown "$AGENT_USER:$AGENT_USER" "${AGENT_HOME}/.ssh/config"
+    chmod 0600 "${AGENT_HOME}/.ssh/config"
+  fi
+  log "  agent-os ssh config wired for github.com"
+
+  # Cron job — runs as agent-os, pulls every 5 min, logs to /var/log/agent-os.
+  cat > /etc/cron.d/agent-os-sync <<EOF
+# AgentOS auto-sync from user's fork — installed by install.sh saga #814.
+# Pulls the latest template + user customisations every 5 min. Disable by
+# removing this file.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+*/5 * * * * ${AGENT_USER} cd ${INSTALL_ROOT}/claude && git pull --quiet origin main >> ${LOG_DIR}/auto-sync.log 2>&1
+EOF
+  chmod 0644 /etc/cron.d/agent-os-sync
+  log "  /etc/cron.d/agent-os-sync installed (*/5 git pull as ${AGENT_USER})"
+  mark_step_completed 175  # internal: 17.5 → 175 (state.json key int)
+fi
+
+###############################################################################
 # Step 18 — wait + verify
 ###############################################################################
 step "18/18 verify"
