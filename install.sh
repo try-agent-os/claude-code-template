@@ -1227,12 +1227,70 @@ EOF
   fi
 
   ###########################################################################
+  # Step 4e — Deploy key for VPS → user repo (saga #814)
+  #
+  # Generates an ed25519 keypair on the Mac, scps the privkey to the VPS as
+  # /root/.ssh/agentos_deploy_key, configures /root/.ssh/config so any git
+  # action targeting github.com uses this key. Adds the pubkey as a deploy
+  # key on the user's repo via `gh repo deploy-key add`.
+  #
+  # Skipped if --skip-personal-repo: VPS clones from public try-agent-os repo
+  # which doesn't need auth.
+  ###########################################################################
+  if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
+    header "Step 4e: Deploy key for VPS"
+    local DEPLOY_KEY="${DEPLOY_STATE_DIR}/agentos-deploy-${SSH_ALIAS}"
+    if [[ ! -f "${DEPLOY_KEY}" ]]; then
+      info "Generating ed25519 deploy keypair (no passphrase)..."
+      ssh-keygen -t ed25519 -f "${DEPLOY_KEY}" -N "" -C "agentos-${SSH_ALIAS}-$(date -u +%Y%m%dT%H%M%SZ)" -q
+      ok "  created ${DEPLOY_KEY}{,.pub}"
+    else
+      info "Reusing existing deploy key at ${DEPLOY_KEY}"
+    fi
+
+    # Add to user's repo as deploy key. Allow-write only if bidirectional sync
+    # was opted into (we default pull-only — saga #814 design Q5).
+    local DEPLOY_TITLE="agentos-${SSH_ALIAS}"
+    if gh repo deploy-key list -R "${GH_USER}/${USER_REPO_NAME}" 2>/dev/null | grep -q "${DEPLOY_TITLE}"; then
+      info "Deploy key '${DEPLOY_TITLE}' already on repo — skipping"
+    else
+      info "Adding deploy key to ${GH_USER}/${USER_REPO_NAME}..."
+      # --allow-write only if bidirectional toggle was set; default read-only.
+      local KEY_ARGS=()
+      [[ "${BIDIRECTIONAL_SYNC:-0}" == 1 ]] && KEY_ARGS+=(--allow-write)
+      gh repo deploy-key add "${DEPLOY_KEY}.pub" \
+        --title "${DEPLOY_TITLE}" \
+        -R "${GH_USER}/${USER_REPO_NAME}" \
+        "${KEY_ARGS[@]}" \
+        &>/dev/null \
+        || warn "  gh repo deploy-key add failed — VPS clone will fall back to public template"
+      ok "  added deploy key '${DEPLOY_TITLE}' (read-$([[ "${BIDIRECTIONAL_SYNC:-0}" == 1 ]] && echo write || echo only))"
+    fi
+
+    # SCP the privkey + configure root's ssh on VPS.
+    info "Installing deploy key on ${SSH_ALIAS}:/root/.ssh/..."
+    scp -q "${DEPLOY_KEY}" "${SSH_ALIAS}:/root/.ssh/agentos_deploy_key" || fail "scp deploy key failed"
+    ssh "${SSH_ALIAS}" "chmod 600 /root/.ssh/agentos_deploy_key && \
+      grep -q 'Host github.com.*agentos' /root/.ssh/config 2>/dev/null || \
+      printf '\n# AgentOS deploy key (saga #814)\nHost github.com\n  IdentityFile /root/.ssh/agentos_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> /root/.ssh/config" \
+      || fail "deploy key install on VPS failed"
+    ok "  /root/.ssh/agentos_deploy_key installed + ssh config wired for github.com"
+  fi
+
+  ###########################################################################
   # Step 5 — Remote install (git clone, not rsync)
   ###########################################################################
   header "Step 5 of 6: Remote install"
-  info "Cloning template on $SSH_ALIAS..."
+  # Clone source: user's private fork (auth via deploy key) if SKIP_PERSONAL_REPO
+  # is unset, otherwise the public template. Step 8 of remote install.sh will
+  # also use this URL via --bootstrap-personal-repo.
+  local CLONE_URL="https://github.com/try-agent-os/claude-code-template"
+  if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
+    CLONE_URL="git@github.com:${GH_USER}/${USER_REPO_NAME}.git"
+  fi
+  info "Cloning ${CLONE_URL} on ${SSH_ALIAS}..."
 
-  ssh "$SSH_ALIAS" "rm -rf /tmp/agentos && git clone --depth 1 https://github.com/try-agent-os/claude-code-template /tmp/agentos" 2>&1 | tee -a "$DEPLOY_LOG"
+  ssh "$SSH_ALIAS" "rm -rf /tmp/agentos && git clone --depth 1 '${CLONE_URL}' /tmp/agentos" 2>&1 | tee -a "$DEPLOY_LOG"
   ok "Repo cloned remotely"
 
   info "Running install.sh non-interactively (this will take 5-15 min)..."
