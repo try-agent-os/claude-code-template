@@ -1643,6 +1643,34 @@ else
   fi
 fi
 
+# Preflight: bot will silently ignore everyone if there are no allowlisted admins.
+# This is the single most-confusing failure mode for first-time deployers — the
+# install completes "successfully", the bot says "@your_bot is online", but
+# /start hangs forever because telegram-mcp's seedAdmins() finds an empty list
+# and rejects all message authors as not_in_allowlist. Catch it now, with a
+# message the user can act on.
+if [[ "${MINIMAL:-0}" != 1 ]] && [[ -z "${TG_ADMIN_USER_IDS:-}" ]] && [[ -z "${TG_USER_ID:-}" ]]; then
+  cat >&2 <<'PREFLIGHT_FAIL'
+
+  +-----------------------------------------------------------------+
+  | PREFLIGHT FAILURE: no Telegram admins configured.               |
+  |                                                                 |
+  | The bot will start but ignore every incoming message because    |
+  | nobody is on the allowlist. Set at least one admin user ID      |
+  | (numeric) before continuing.                                    |
+  |                                                                 |
+  | How to fix:                                                     |
+  |   1. Open @userinfobot on Telegram, send /start, copy your ID.  |
+  |   2. Re-run with: TG_ADMIN_USER_IDS=<your-id> bash install.sh   |
+  |      (or rerun the wizard: bash install.sh --reset)             |
+  |                                                                 |
+  | If you genuinely want a bot with NO admins (read-only, public), |
+  | re-run with --minimal to skip the Telegram bot entirely.        |
+  +-----------------------------------------------------------------+
+PREFLIGHT_FAIL
+  exit 1
+fi
+
 # Export wizard outputs for downstream steps
 export PROJECT_NAME TIMEZONE TG_BOT_TOKEN TG_USER_ID TG_ADMIN_USER_IDS TG_ADMIN_USERNAMES GIT_REMOTE WHISPER_MODEL
 mark_step_completed 2
