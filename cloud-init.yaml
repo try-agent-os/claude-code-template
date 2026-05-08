@@ -1,5 +1,5 @@
 #cloud-config
-# AgentOS cloud-init — used by the "Deploy to DigitalOcean" button in README
+# AgentOS cloud-init -- used by the "Deploy to DigitalOcean" button in README
 # and any other one-click cloud provider that supports cloud-init user_data.
 #
 # Two-stage flow:
@@ -9,13 +9,17 @@
 #      The wizard prompts for TG_BOT_TOKEN / CLAUDE_CODE_OAUTH_TOKEN / etc.
 #
 # Why two-stage? Cloud providers don't safely template secrets into user_data
-# from a URL — the deploy URL would have to leak tokens through the browser
+# from a URL -- the deploy URL would have to leak tokens through the browser
 # history. Cloud-init does the prep that doesn't need secrets; the install
 # wizard prompts for them on the user's terminal under their control.
 #
 # To pre-fill non-secret answers, set them as env vars in /etc/profile.d/
-# before the user runs install.sh — they'll be picked up via Step 2 wizard
+# before the user runs install.sh -- they'll be picked up via Step 2 wizard
 # state.
+#
+# IMPORTANT: this file MUST be pure 7-bit ASCII. cloud-init's strict YAML 1.1
+# parser rejects non-ASCII bytes ("unacceptable character #x0080") and silently
+# skips runcmd, leaving /opt/agent-os-bootstrap empty. CI lints this.
 
 package_update: true
 package_upgrade: false  # full upgrade adds 2-3 minutes; install.sh runs apt-get update anyway
@@ -32,27 +36,27 @@ write_files:
     owner: root:root
     content: |
 
-      ┌─────────────────────────────────────────────────────────────┐
-      │ AgentOS template provisioned — finish setup with:           │
-      │                                                              │
-      │   sudo bash /opt/agent-os-bootstrap/install.sh              │
-      │                                                              │
-      │ The wizard will prompt for:                                  │
-      │   • Telegram BotFather token (from @BotFather → /newbot)    │
-      │   • Anthropic OAuth token (run `claude setup-token` on Mac) │
-      │   • Optional: project slug, timezone, whisper model         │
-      │                                                              │
-      │ Once finished, send any message to your Telegram bot and    │
-      │ the operator will reply.                                     │
-      │                                                              │
-      │ Docs: https://github.com/try-agent-os/claude-code-template  │
-      └─────────────────────────────────────────────────────────────┘
+      =============================================================
+       AgentOS template provisioned. Finish setup with:
+
+         sudo bash /opt/agent-os-bootstrap/install.sh
+
+       The wizard will prompt for:
+         * Telegram BotFather token (from @BotFather -> /newbot)
+         * Anthropic OAuth token (run `claude setup-token` on Mac)
+         * Optional: project slug, timezone, whisper model
+
+       Once finished, send any message to your Telegram bot and
+       the operator will reply.
+
+       Docs: https://github.com/try-agent-os/claude-code-template
+      =============================================================
 
   - path: /etc/profile.d/agent-os-bootstrap.sh
     permissions: '0644'
     owner: root:root
     content: |
-      # AgentOS bootstrap path — point users at the install wizard on first login.
+      # AgentOS bootstrap path -- point users at the install wizard on first login.
       export AGENT_OS_BOOTSTRAP=/opt/agent-os-bootstrap
       if [ -d "$AGENT_OS_BOOTSTRAP" ] && [ ! -f /etc/agent-os/install.state.json ]; then
         echo "AgentOS template ready. Run: sudo bash $AGENT_OS_BOOTSTRAP/install.sh"

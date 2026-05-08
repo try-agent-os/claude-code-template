@@ -6,6 +6,10 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
+### Fixed (v0.1.1 candidate — fresh-eyes validation pass)
+- `cloud-init.yaml` — strip non-ASCII bytes (em-dashes `U+2014`, box-drawing `┌─│└┘•→`). cloud-init's strict YAML 1.1 parser rejects non-ASCII silently with `unacceptable character #x0080: special characters are not allowed`, which made the parser load the file but skip `runcmd` entirely — the Deploy-to-DigitalOcean button left `/opt/agent-os-bootstrap/` empty, so the user found nothing to run. Now pure 7-bit ASCII (CI enforces this on every push). Verified with `python3 -c "all(b<128 for b in open('cloud-init.yaml','rb').read())"`.
+- `.github/workflows/ci.yml` — new yaml-validate steps: ASCII-only check on `cloud-init.yaml` (catches the actual root cause cheaply) plus best-effort `cloud-init devel schema --config-file cloud-init.yaml` lint.
+
 ### Added
 - `install.sh` Step 4 / 4c — placeholder-token guards: wizard now rejects BotFather and OAuth tokens that contain `FAKE` / `fake` / `test_token` / `placeholder` / `PLACEHOLDER` / `EXAMPLE` (and the canonical fake `123456789:AAH` BotFather prefix). Plus the BotFather token now is live-validated against `https://api.telegram.org/bot<TOKEN>/getMe` so revoked or mistyped real tokens are caught at the prompt instead of silently writing into `/etc/agent-os/agent-os.env` and breaking the bot at runtime with 401. OAuth side accepts both `sk-ant-oat01-…` (long-lived) and `sk-ant-api03-…` (Console API key) formats. Closes the headache where a developer's placeholder token persisted across re-runs and the operator returned API 401 on every channel-routed Telegram message.
 - `.claude-settings.template.json` — `permissions.defaultMode: "bypassPermissions"`. Belt-and-suspenders alongside `--dangerously-skip-permissions` for cloud deployments where there is no human at the terminal to approve permission requests. Local dev installs may want to override this to `default` for a per-tool permission UI.

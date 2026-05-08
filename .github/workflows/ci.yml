@@ -91,6 +91,40 @@ jobs:
         run: |
           yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, comments-indentation: disable}}" \
             cloud-init.yaml
+      - name: cloud-init.yaml must be pure ASCII
+        # cloud-init's strict YAML 1.1 parser rejects non-ASCII bytes silently:
+        # the file loads, but runcmd never executes ("unacceptable character #x0080").
+        # The DigitalOcean deploy button hit this with em-dashes + box-drawing chars
+        # in MOTD. Enforce ASCII-only at CI time so we can never regress.
+        run: |
+          if python3 -c "import sys; data=open('cloud-init.yaml','rb').read(); sys.exit(1 if any(b>127 for b in data) else 0)"; then
+            echo "OK: cloud-init.yaml is pure 7-bit ASCII"
+          else
+            echo "::error file=cloud-init.yaml::non-ASCII bytes present (cloud-init parser rejects these silently)"
+            python3 -c "
+          import sys
+          data = open('cloud-init.yaml','rb').read()
+          for i, b in enumerate(data):
+              if b > 127:
+                  ln = data[:i].count(b'\n') + 1
+                  start = data.rfind(b'\n', 0, i) + 1
+                  end = data.find(b'\n', i)
+                  print(f'  L{ln}: byte 0x{b:02x} in: {data[start:end].decode(\"utf-8\", errors=\"replace\")[:80]}')
+                  break
+          "
+            exit 1
+          fi
+      - name: cloud-init schema validation (best-effort)
+        # cloud-init devel schema catches structural errors. Best-effort because
+        # the GitHub runner's cloud-init may lag the version on the actual droplet.
+        run: |
+          if command -v cloud-init >/dev/null 2>&1; then
+            cloud-init devel schema --config-file cloud-init.yaml || true
+          else
+            sudo apt-get install -y -qq cloud-init >/dev/null 2>&1 && \
+              cloud-init devel schema --config-file cloud-init.yaml || \
+              echo "::warning::cloud-init not available; skipping schema validation"
+          fi
       - name: Lint workflow files
         run: |
           yamllint -d "{extends: default, rules: {line-length: disable, truthy: disable}}" \
