@@ -1,0 +1,32 @@
+[
+  {
+    "type": "epic",
+    "name": "founder-onboarding",
+    "description": "First-run AgentOS setup. Capture owner profile, first project, routines, integration status. Mark complete when memory/owner.md is filled and at least one memory/projects/<slug>/ exists.",
+    "priority": "high"
+  },
+  {
+    "type": "task",
+    "epic": "founder-onboarding",
+    "title": "Capture founder profile (memory/owner.md)",
+    "description": "Walk through the YAML template. Skip any field you can't fill in 30 seconds — come back to it later."
+  },
+  {
+    "type": "task",
+    "epic": "founder-onboarding",
+    "title": "Add first project",
+    "description": "Pick the most active project. Capture: company name + slug, what it does, current quarter goals, North Star metric, runway. Save to memory/projects/<slug>/index.md."
+  },
+  {
+    "type": "task",
+    "epic": "founder-onboarding",
+    "title": "Configure routines",
+    "description": "Confirm: daily brief time, weekly review time, pre-meeting nudge minutes. Update memory/owner.md routines section."
+  },
+  {
+    "type": "task",
+    "epic": "founder-onboarding",
+    "title": "Test integrations",
+    "description": "If Gmail/Calendar MCPs are configured, run a read-test. If not, note in memory/owner.md.integrations and explain what's available without them."
+  }
+]
