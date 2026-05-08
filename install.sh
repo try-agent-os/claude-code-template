@@ -25,7 +25,7 @@
 #   --with=feature-dev,frontend-design  Comma-separated optional plugins to vendor
 #   --non-interactive               Read all wizard answers from preset env vars (CI/automation)
 #   --bootstrap-personal-repo URL   Replace template remote with user's own GitHub fork
-#   --whisper=tiny|base|medium      Whisper model size (default medium, 1.5 GB)
+#   --whisper=tiny|base|medium      Whisper model size (default tiny=75MB; medium=1.5GB)
 #   --harden                        Apply egress firewall (deny by default, allow only api.anthropic.com,
 #                                   GitHub, apt repos). Off by default — heavy.
 #   --skip-build                    Skip MCP build steps (assume artefacts exist; for re-runs)
