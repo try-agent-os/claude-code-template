@@ -903,6 +903,20 @@ exec_remote_setup_wizard() {
     ok "Claude Code: $(claude --version 2>&1 | head -1)"
   fi
 
+  # Homebrew — required for auto-installing CLIs below. If missing, give the
+  # user a one-liner and bail (can't proceed without brew on Mac).
+  # The wizard re-runs idempotent so user installs brew, comes back, continues.
+  if ! command -v brew >/dev/null 2>&1; then
+    warn "Homebrew not found — required for auto-installing gh / doctl / etc."
+    info "Install with:"
+    info ''
+    info '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    info ''
+    info "Then re-run this wizard. We'll resume from where you left off."
+    fail "Re-run after installing Homebrew."
+  fi
+  ok "Homebrew: $(brew --version 2>&1 | head -1)"
+
   # gh CLI — required for personal-repo dual-deployment (saga #814) unless
   # opted out via --skip-personal-repo. Auto-install via brew if missing
   # (saga #815: wizard does the work, user doesn't pre-prepare).
