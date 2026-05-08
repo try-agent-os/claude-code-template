@@ -1,2 +1,66 @@
 .worktrees/
 .DS_Store
+
+# ─────────────────────────────────────────────────────────────────────────
+# Runtime memory — user data, NEVER commit even by accident.
+# Schemas (the *_template.md files) are template-managed and DO get committed.
+# Anything filled in by the operator at runtime stays local to the deploy.
+# ─────────────────────────────────────────────────────────────────────────
+/memory/owner.md
+/memory/people/*
+!/memory/people/_template.md
+!/memory/people/.keep
+/memory/contacts/*
+!/memory/contacts/_template.md
+!/memory/contacts/.keep
+/memory/clients/*
+!/memory/clients/_template.md
+!/memory/clients/.keep
+/memory/projects/*
+!/memory/projects/_template.md
+!/memory/projects/.keep
+/memory/members/*
+!/memory/members/_template.md
+!/memory/members/.keep
+/memory/team/decisions.md
+/memory/team/shared-priorities.md
+/memory/sweeps/
+
+# Runtime logs / audit trails / session state — high-churn, low-signal-to-noise.
+/logs/
+/log/
+/var/log/
+operator.log
+operator-errors.log
+dispatcher.log
+saga-mcp.log
+telegram-mcp*.log
+*.session.jsonl
+
+# Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
+.env
+.env.*
+!.env.example
+agent-os.env
+*.pem
+*.key
+!*.pub.key
+id_rsa*
+id_ed25519*
+!*.pub
+
+# Plugin runtime state
+plugins/telegram/messages.db
+plugins/telegram/messages.db-*
+plugins/claude-peers/*.db
+plugins/claude-peers/*.db-*
+plugins/*/dist/
+plugins/*/node_modules/
+
+# Build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OS
+Thumbs.db
