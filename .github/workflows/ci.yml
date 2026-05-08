@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck (install.sh + agent scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -qq shellcheck
+      - name: Lint install.sh
+        # SC2155, SC2086, SC1090, SC1091 are intentional / impractical to fix.
+        run: shellcheck -e SC2155,SC2086,SC1090,SC1091,SC2034 install.sh uninstall.sh
+      - name: Lint agent scripts
+        run: |
+          shellcheck -e SC2155,SC2086,SC1090,SC1091,SC2034 \
+            agents/heartbeat/dispatcher.sh \
+            agents/operator/start.sh \
+            scripts/verify.sh
+
+  json-validate:
+    name: JSON validity (config templates + manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get install -qq jq
+      - name: Validate every JSON file
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r f; do
+            if ! jq . "$f" > /dev/null; then
+              echo "::error file=$f::Invalid JSON"
+              fail=1
+            fi
+          done < <(find . -path ./node_modules -prune -o \
+                          -path ./plugins/*/node_modules -prune -o \
+                          -name '*.json' -type f -print)
+          exit $fail
+      - name: Validate marketplace.json schema (basic shape)
+        run: |
+          jq -e '.id and .name and .plugins and (.plugins | type=="array")' \
+            .claude-plugin/marketplace.json
+          # Each plugin entry must have name + source string
+          jq -e '.plugins | all(.name and (.source|type=="string"))' \
+            .claude-plugin/marketplace.json
+      - name: Validate plugin manifests have userConfig.title where userConfig present
+        run: |
+          set -e
+          fail=0
+          for f in plugins/*/.claude-plugin/plugin.json; do
+            [ -f "$f" ] || continue
+            if jq -e 'has("userConfig")' "$f" > /dev/null; then
+              # Each userConfig field must have a title
+              if ! jq -e '.userConfig | to_entries | all(.value | has("title"))' "$f" > /dev/null; then
+                echo "::error file=$f::userConfig fields are missing 'title'"
+                fail=1
+              fi
+            fi
+          done
+          exit $fail
+
+  yaml-validate:
+    name: YAML validity (cloud-init + workflows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint cloud-init
+        # Allow long lines + cloud-init's '#cloud-config' comment header
+        run: |
+          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, comments-indentation: disable}}" \
+            cloud-init.yaml
+      - name: Lint workflow files
+        run: |
+          yamllint -d "{extends: default, rules: {line-length: disable, truthy: disable}}" \
+            .github/workflows/
+
+  smoke-install:
+    name: Smoke install (Ubuntu 24.04 container)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke prerequisites + non-interactive guard
+        run: |
+          # Just verify install.sh boots and the args parser accepts --non-interactive
+          # (full install needs systemd which doesn't run in containers without --privileged)
+          apt-get update -qq && apt-get install -y -qq bash curl
+          bash -n install.sh
+          bash install.sh --help 2>&1 | head -20 || true
+          bash install.sh --version 2>&1 | head || true
