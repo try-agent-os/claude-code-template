@@ -110,9 +110,15 @@ done
 
 tmux new-session -d -s "$SESSION" -c "$INSTALL_ROOT/agents/operator" \
   "claude --dangerously-skip-permissions ${ADD_DIRS[*]} \
-   --channels plugin:claude-peers@agentos plugin:telegram@agentos"
+   --dangerously-load-development-channels server:telegram \
+   --dangerously-load-development-channels server:claude-peers"
 
-sleep 5
+# Auto-dismiss the "Loading development channels" warning dialog. claude-code
+# shows this every session when --dangerously-load-development-channels is
+# passed; there's no persistence flag (we grepped — no has*DevChannel*Accepted
+# key in the binary). Default option is "1. I am using this for local
+# development" so a single Enter advances.
+sleep 7
 tmux send-keys -t "$SESSION" Enter
 sleep 8
 tmux send-keys -t "$SESSION" "boot" Enter

@@ -119,7 +119,7 @@ readonly ANTHROPIC_KEY_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
 # repo (plugins/claude-peers, plugins/telegram). saga-mcp remains a separate
 # clone — it is a long-running broker, not a plugin.
 TEMPLATE_REPO="https://github.com/try-agent-os/claude-code-template"
-readonly SAGA_MCP_REPO="https://github.com/spranab/saga-mcp"
+readonly SAGA_MCP_REPO="https://github.com/try-agent-os/saga-mcp"
 
 # Defaults
 WHISPER_MODEL="medium"

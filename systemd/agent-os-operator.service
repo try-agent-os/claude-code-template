@@ -32,6 +32,12 @@ ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agen
     --dangerously-load-development-channels server:telegram \
     --dangerously-load-development-channels server:claude-peers'
 ExecStop=/usr/bin/tmux kill-session -t operator
+# Auto-dismiss the "Loading development channels" warning dialog. claude-code
+# shows it every session when --dangerously-load-development-channels is
+# passed; no persistence flag exists in the binary. Default option is
+# "1. I am using this for local development" so a single Enter advances.
+# Backgrounded (`&`) and disowned so this Post step exits immediately.
+ExecStartPost=/bin/bash -c '(sleep 7 && /usr/bin/tmux send-keys -t operator Enter 2>/dev/null) & disown'
 Restart=on-failure
 RestartSec=30
 
