@@ -445,6 +445,7 @@ for arg in "$@"; do
       ;;
     --whisper=*) WHISPER_MODEL="${arg#--whisper=}" ;;
     --harden) HARDEN=1 ;;
+    --no-firewall) NO_FIREWALL=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
     --resume) ;; # no-op; whole script is idempotent
     --reset) RESET=1 ;;
@@ -2019,7 +2020,52 @@ fi
 mark_step_completed 18
 
 ###############################################################################
-# Optional: --harden firewall
+# Baseline ingress hardening — runs by default unless --no-firewall
+###############################################################################
+# Default-on for fresh installs because public-internet droplets without a
+# firewall + fail2ban are how SSH brute-force compromises happen on day 1.
+# Skip with --no-firewall for environments that manage their own iptables.
+if [[ "${NO_FIREWALL:-0}" != 1 ]]; then
+  step "extra: ingress hardening (UFW + fail2ban)"
+
+  # UFW — allow SSH (with rate limit), deny everything else inbound.
+  # Outgoing left default-allow; the strict --harden step below tightens that
+  # for users who want it.
+  if command -v ufw >/dev/null 2>&1; then
+    ufw default deny incoming >/dev/null
+    ufw default allow outgoing >/dev/null
+    ufw limit ssh/tcp >/dev/null         # rate-limits brute-force at the firewall
+    # Note: telegram-mcp (3848), saga-mcp (3851), peers broker (7899) bind to
+    # 127.0.0.1 by default — no inbound rule needed.
+    ufw --force enable >/dev/null
+    log "  ufw: default deny incoming, allow ssh (rate-limited)"
+  else
+    warn "  ufw not installed — skipping firewall (apt install ufw)"
+  fi
+
+  # fail2ban — sshd jail, default 5 retries → 10 min ban.
+  if ! command -v fail2ban-client >/dev/null 2>&1; then
+    apt-get install -y -qq fail2ban >/dev/null 2>&1 || true
+  fi
+  if command -v fail2ban-client >/dev/null 2>&1; then
+    install -d -m 0755 /etc/fail2ban/jail.d
+    cat > /etc/fail2ban/jail.d/agent-os.local <<'F2BEOF'
+# AgentOS baseline jail. Tighten settings if your droplet sees abuse.
+[sshd]
+enabled = true
+maxretry = 5
+findtime = 10m
+bantime = 10m
+F2BEOF
+    systemctl enable --now fail2ban >/dev/null 2>&1 || true
+    log "  fail2ban: sshd jail enabled (5 retries / 10m ban)"
+  else
+    warn "  fail2ban not installed — skipping (apt install fail2ban)"
+  fi
+fi
+
+###############################################################################
+# Optional: --harden firewall (egress allow-list, much stricter)
 ###############################################################################
 if [[ "$HARDEN" == 1 ]]; then
   step "extra: --harden egress firewall"
