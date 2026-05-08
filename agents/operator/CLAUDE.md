@@ -45,8 +45,9 @@ Messages from dispatcher/workers arrive via channel push. Format: a single line 
 
 1. `list_peers(scope: "machine")` — see who's online
 2. `set_summary(summary: "Operator: Telegram interface for AgentOS")` — introduce yourself
-3. `telegram_get_recent(chat_id: {TG_USER_ID}, limit: 20)` — read recent messages for context
-4. `mcp__saga-mcp__tracker_dashboard(project_id: {PROJECT_ID})` — current task state
+3. Check onboarding state (see **First-run Onboarding** section below) — if first run, start onboarding flow BEFORE reading messages
+4. `telegram_get_recent(chat_id: {TG_USER_ID}, limit: 20)` — read recent messages for context
+5. `mcp__saga-mcp__tracker_dashboard(project_id: {PROJECT_ID})` — current task state
 
 ## Routing
 
@@ -101,15 +102,46 @@ Everything goes through MCP tools.
 
 **CRITICAL:** When you need to send a message to Telegram — CALL `telegram_send_message` or `telegram_reply` tool. Don't just describe that you "sent" something — actually call the tool. Without a tool call, the message will NOT be sent.
 
+## First-run Onboarding
+
+On every boot, check for first-run state before processing messages.
+
+**Triggering logic:**
+1. `memory/owner.md` frontmatter `name: ""` (empty) → first run → invoke onboarding skill
+2. `SELECT * FROM onboarding_state WHERE user_id = {TG_USER_ID} AND completed_at IS NULL` → onboarding not finished → resume from current phase
+3. `completed_at IS NOT NULL` → onboarding done → skip
+
+**Multi-admin:** onboard each admin separately by chat_id. Each gets their own row in onboarding_state.
+
+**Skill:** [`agents/operator/skills/onboarding.md`](skills/onboarding.md) — full UX flow (4 phases: Welcome, Survey, Menu, Lifehacks).
+
+**SQLite schema:** [`agents/operator/docs/onboarding-schema.sql`](docs/onboarding-schema.sql)
+
+**Owner profile:** survey data is saved to `memory/owner.md` (created by `install.sh` from [`memory/owner._template.md`](../../memory/owner._template.md)).
+
+**Important:** on a fresh install the operator must initiate the Telegram dialog — don't wait for the user's first message. Start onboarding automatically on boot.
+
+### Onboarding commands
+
+Handle at any point in the conversation:
+
+| Command | Action |
+|---------|--------|
+| `/skip onboarding` | Skip onboarding. UPDATE onboarding_state SET current_phase = 'skipped', completed_at = NOW(). Reply: "Got it, skipping. Type /profile edit anytime to come back." |
+| `/profile` or `/profile view` | Show current profile from memory/owner.md. |
+| `/profile edit` | Run the profile survey again (same 4 questions) and rewrite memory/owner.md. Available anytime, ignores onboarding_state. |
+| `/profile reset` | Clear memory/owner.md and onboarding_state → next boot starts fresh onboarding. |
+
 ## Key files (created as you go)
 
 | File | Purpose |
 |------|---------|
+| `memory/owner.md` | Owner profile (filled by onboarding) |
 | `memory/context.md` | Current situation |
 | `memory/people.md` | CRM + contacts |
 | `memory/opportunities.md` | Opportunities with scoring |
 
-These files are created as you work. Initially they don't exist, and that's fine.
+`memory/owner.md` is pre-created empty by the template — its `name: ""` field signals first-run. All other files are created as you work.
 
 ## Task Management (saga-mcp)
 
