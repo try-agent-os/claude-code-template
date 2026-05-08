@@ -6,12 +6,25 @@ This file tracks **template** changes (T-marked files). Per-deployment changes b
 
 ## [Unreleased]
 
-### Fixed (v0.1.1 candidate — fresh-eyes validation pass)
+## [0.1.1] — 2026-05-08
+
+Patch release: fresh-eyes validation on a clean droplet found 5 issues with the v0.1.0 deploy path. None broke an already-running install; all 5 affected first-time deployers in ways the existing test matrix didn't catch.
+
+Highlights:
+- `cloud-init.yaml` was silently broken — non-ASCII bytes made the parser skip `runcmd`. The Deploy-to-DigitalOcean button left `/opt/agent-os-bootstrap/` empty.
+- Install hardening could lock the operator out of their own droplet (UFW limit ssh + fail2ban combination).
+- WHISPER_MODEL env var was ignored, forcing `medium` (1.5 GB, +3 min build).
+- TELEGRAM_ADMIN_USER_IDS=empty install completed silently, then the bot ignored everyone.
+- Documentation referenced services that aren't actually units.
+
+### Fixed (v0.1.1 — fresh-eyes validation pass)
 - `cloud-init.yaml` — strip non-ASCII bytes (em-dashes `U+2014`, box-drawing `┌─│└┘•→`). cloud-init's strict YAML 1.1 parser rejects non-ASCII silently with `unacceptable character #x0080: special characters are not allowed`, which made the parser load the file but skip `runcmd` entirely — the Deploy-to-DigitalOcean button left `/opt/agent-os-bootstrap/` empty, so the user found nothing to run. Now pure 7-bit ASCII (CI enforces this on every push). Verified with `python3 -c "all(b<128 for b in open('cloud-init.yaml','rb').read())"`.
 - `.github/workflows/ci.yml` — new yaml-validate steps: ASCII-only check on `cloud-init.yaml` (catches the actual root cause cheaply) plus best-effort `cloud-init devel schema --config-file cloud-init.yaml` lint.
 - `install.sh` Step 2 preflight — abort with a clear error if `TG_ADMIN_USER_IDS` and `TG_USER_ID` are both empty AND `--minimal` is not set. Previously install completed "successfully" with an empty allowlist; the bot booted, accepted webhooks, and silently rejected every author — first-time deployers spent 15 minutes trying to figure out why "/start" did nothing. The preflight banner explains both the fix (rerun with `TG_ADMIN_USER_IDS=<your-id>`) and the alternative path (`--minimal` for a no-Telegram install).
 - `install.sh` Whisper model — env var `WHISPER_MODEL` was silently overridden in non-interactive mode: the wizard fell through to `medium` (1.5GB, ~3min build) even when SSH passed `WHISPER_MODEL=tiny`. Default lowered to `tiny` (75MB), and all four assignment sites now thread `${WHISPER_MODEL:-tiny}` through every fallback so env-var wins. Users who want full quality can re-run with `WHISPER_MODEL=medium`.
 - `install.sh` ingress hardening — `ufw limit ssh/tcp` (rate-limit at 6 conns/30s) replaced with plain `ufw allow ssh/tcp`, because normal post-install SSH status polling from the Mac wizard tripped the limiter and the user's own IP got jailed for 10+ min by fail2ban (survived a power-cycle, since both UFW and fail2ban persist). fail2ban now allowlists `$SSH_CLIENT` source IP via `ignoreip` so the installer cannot lock itself out. A banner prints the unban command at the end of step so the operator at least knows the failure mode if they reconnect from a fresh IP. fail2ban handles brute-force at the application layer; UFW rate-limit at the firewall layer was redundant and over-aggressive for normal use.
+- `TROUBLESHOOTING.md` — added "Service map" table at the top listing the four real systemd units (`agent-os-operator`, `agent-os-saga`, `agent-os-telegram-mcp`, `agent-os-dispatcher.timer`) with explicit note that there is **no** `agent-os-claude-peers.service` (peers is stdio MCP, spawned per claude session). Helps debuggers stop looking for a unit that doesn't exist.
+- `QUICKSTART.md` + `README.md` — install timing claim corrected from "~3 min" / "~10-12 min" to honest "~7-8 min on s-2vcpu-4gb" (apt 2 min + plugin builds 3 min + whisper 2 min + claude warm-up 1 min). Faster on s-4vcpu-8gb.
 
 ### Added
 - `install.sh` Step 4 / 4c — placeholder-token guards: wizard now rejects BotFather and OAuth tokens that contain `FAKE` / `fake` / `test_token` / `placeholder` / `PLACEHOLDER` / `EXAMPLE` (and the canonical fake `123456789:AAH` BotFather prefix). Plus the BotFather token now is live-validated against `https://api.telegram.org/bot<TOKEN>/getMe` so revoked or mistyped real tokens are caught at the prompt instead of silently writing into `/etc/agent-os/agent-os.env` and breaking the bot at runtime with 401. OAuth side accepts both `sk-ant-oat01-…` (long-lived) and `sk-ant-api03-…` (Console API key) formats. Closes the headache where a developer's placeholder token persisted across re-runs and the operator returned API 401 on every channel-routed Telegram message.

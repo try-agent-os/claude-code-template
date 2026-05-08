@@ -43,9 +43,9 @@ Cloud-init has already cloned the template to `/opt/agent-os-bootstrap` and run 
 - **Telegram bot token**: paste the BotFather token. Wizard live-validates it against `/getMe` and shows the bot's username on success.
 - **Anthropic OAuth/API token**: paste `sk-ant-oat01-...` or `sk-ant-api03-...`.
 - **Bot admins**: send `/start` to your bot from each Telegram account that should have access. Wizard polls the API and offers to add detected admins.
-- **Optional**: timezone (default Europe/Lisbon), whisper model (tiny/base/medium for voice transcription), git remote.
+- **Optional**: timezone (default Europe/Lisbon), whisper model (default `tiny` for fast install; `medium` if you want full-quality voice transcription, costs ~3 min extra), git remote.
 
-The wizard runs all 18 install steps non-interactively after collecting answers. Total time: ~3 minutes including apt installs and plugin builds.
+The wizard runs all 18 install steps non-interactively after collecting answers. Total time: **~7-8 minutes** on a `s-2vcpu-4gb` droplet (apt installs ~2 min, MCP plugin builds ~3 min, whisper model download + cmake build ~2 min, claude session warm-up ~1 min). Faster on `s-4vcpu-8gb`.
 
 ## Step 3 — Send your bot a message
 

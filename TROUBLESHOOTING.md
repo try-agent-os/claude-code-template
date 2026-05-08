@@ -2,6 +2,19 @@
 
 Top issues encountered during real-world deploys, with verified fixes. If your symptom isn't here, check `journalctl -u agent-os-operator.service -n 50` and `/var/log/agent-os/operator-errors.log` for clues.
 
+## Service map (the units that actually exist)
+
+Systemd units installed by `install.sh`:
+
+| Unit | Role | Port |
+|------|------|------|
+| `agent-os-operator.service` | Long-lived `claude` session in tmux, listens for Telegram via channel push | n/a (stdio + SSE clients to MCPs) |
+| `agent-os-saga.service` | Task tracker MCP (HTTP/SSE) | 3851 |
+| `agent-os-telegram-mcp.service` | Bot bridge MCP (HTTP/SSE), single Telegram getUpdates poller | 3848 |
+| `agent-os-dispatcher.timer` | Heartbeat — fires `dispatcher.sh` every 45 min for scheduled work | n/a |
+
+**There is NO `agent-os-claude-peers.service`.** claude-peers is a stdio-MCP plugin spawned per claude session via `.claude.json mcpServers`. If you're hunting peers logs, look at the operator's claude session output (`tmux attach -t operator`), not systemd. Peer messages are delivered via the operator's MCP `notifications/claude/channel` push, not via a separate broker process.
+
 ## Bot doesn't reply to Telegram messages
 
 ### Symptom
@@ -27,7 +40,7 @@ sqlite3 /opt/agent-os/claude/plugins/telegram/messages.db \
 ```
 
 ### Root cause
-`TELEGRAM_ADMIN_USER_IDS` was empty in `/etc/agent-os/agent-os.env` when telegram-mcp first started — it had no admins to seed. Two fixes since `1ad1cf4`: install.sh validates token format + live `getMe` check at the prompt, and a fresh deploy sets `TELEGRAM_ADMIN_USER_IDS` from the wizard's `/start`-polling step.
+`TELEGRAM_ADMIN_USER_IDS` was empty in `/etc/agent-os/agent-os.env` when telegram-mcp first started — it had no admins to seed. Three fixes layered: install.sh validates token format + live `getMe` check at the prompt; the Mac wizard's `/start`-polling step seeds `TELEGRAM_ADMIN_USER_IDS` from each admin's reply; and as of v0.1.1 install.sh's Step 2 preflight aborts if both `TG_ADMIN_USER_IDS` and `TG_USER_ID` are empty (unless `--minimal` is passed).
 
 ## Operator service stuck "activating", restart loop with `status=1/FAILURE`
 

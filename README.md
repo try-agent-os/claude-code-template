@@ -55,7 +55,8 @@ curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/m
 #   • SSH in, run 18-step install
 #   • prompt for Telegram bot token + Anthropic OAuth
 #   • configure auto-sync cron between your fork and the droplet
-# Total time ~10-12 min. Send a message to your bot. It replies.
+# Total time ~10-15 min (provisioning ~2 min + install.sh ~7-8 min on
+# s-2vcpu-4gb; faster on s-4vcpu-8gb). Send a message to your bot. It replies.
 ```
 
 Full step-by-step: [QUICKSTART.md](./QUICKSTART.md)
