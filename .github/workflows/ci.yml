@@ -97,17 +97,37 @@ jobs:
             .github/workflows/
 
   smoke-install:
-    name: Smoke install (Ubuntu 24.04 container)
+    name: Smoke install (${{ matrix.distro }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
     container:
-      image: ubuntu:24.04
+      image: ${{ matrix.distro }}
     steps:
       - uses: actions/checkout@v4
-      - name: Smoke prerequisites + non-interactive guard
+      - name: Smoke prerequisites + bash -n + apt-name compat
         run: |
-          # Just verify install.sh boots and the args parser accepts --non-interactive
-          # (full install needs systemd which doesn't run in containers without --privileged)
-          apt-get update -qq && apt-get install -y -qq bash curl
+          # Containers don't run systemd without --privileged, so we don't run
+          # the full install. We DO check: syntax, --help works, all apt
+          # package names in Step 3 prereqs resolve on this distro.
+          apt-get update -qq
+          apt-get install -y -qq bash curl
           bash -n install.sh
           bash install.sh --help 2>&1 | head -20 || true
-          bash install.sh --version 2>&1 | head || true
+
+          # Step 3 apt prereqs — verify package names exist on this distro
+          # (bubblewrap is missing on Debian 12 by default; that's a known
+          # divergence we accept — install.sh degrades gracefully if missing)
+          for pkg in curl ca-certificates gnupg git tmux jq sqlite3 \
+                     build-essential cmake ffmpeg python3 python3-pip \
+                     ufw socat unzip fail2ban; do
+            if ! apt-cache show "$pkg" > /dev/null 2>&1; then
+              echo "::warning::Package '$pkg' not in apt-cache on ${{ matrix.distro }}"
+            fi
+          done
+          echo "✓ syntax + apt names checked on ${{ matrix.distro }}"
