@@ -1501,13 +1501,18 @@ fi
 
 if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
   log "  step 2 already completed — loading from state, skipping prompts"
-  PROJECT_NAME=$(state_get "project_name" "agentos")
-  TIMEZONE=$(state_get "timezone" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")
-  TG_USER_ID=$(state_get "tg_user_id" "")
-  TG_ADMIN_USER_IDS=$(state_get "tg_admin_user_ids" "")
-  TG_ADMIN_USERNAMES=$(state_get "tg_admin_usernames" "")
-  GIT_REMOTE=$(state_get "git_remote" "")
-  WHISPER_MODEL=$(state_get "whisper_model" "$WHISPER_MODEL")
+  # Each value: incoming env var > state.json > sensible default. The
+  # `state_get key default` pattern returned state unconditionally if state had
+  # the key, silently dropping any env-var override on a re-run. Switching to
+  # `${VAR:-$(state_get key default)}` makes env-var win across the wizard's
+  # fresh-install AND resume branches.
+  PROJECT_NAME="${PROJECT_NAME:-$(state_get "project_name" "agentos")}"
+  TIMEZONE="${TIMEZONE:-$(state_get "timezone" "$(timedatectl show -p Timezone --value 2>/dev/null || echo 'UTC')")}"
+  TG_USER_ID="${TG_USER_ID:-$(state_get "tg_user_id" "")}"
+  TG_ADMIN_USER_IDS="${TG_ADMIN_USER_IDS:-$(state_get "tg_admin_user_ids" "")}"
+  TG_ADMIN_USERNAMES="${TG_ADMIN_USERNAMES:-$(state_get "tg_admin_usernames" "")}"
+  GIT_REMOTE="${GIT_REMOTE:-$(state_get "git_remote" "")}"
+  WHISPER_MODEL="${WHISPER_MODEL:-$(state_get "whisper_model" "tiny")}"
   # Secrets stay in env (already sourced from $ENV_FILE above)
   TG_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-${TG_BOT_TOKEN:-}}"
 else
