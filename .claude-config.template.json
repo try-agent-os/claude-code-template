@@ -20,6 +20,10 @@
     "saga-mcp": {
       "type": "sse",
       "url": "http://localhost:3851/sse"
+    },
+    "claude-peers": {
+      "command": "${INSTALL_ROOT}/.bun/bin/bun",
+      "args": ["run", "${INSTALL_ROOT}/claude/plugins/claude-peers/server.ts"]
     }
   },
 

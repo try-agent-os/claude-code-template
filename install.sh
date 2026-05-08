@@ -984,9 +984,24 @@ EOF
 
   while true; do
     TG_BOT_TOKEN=$(ask_secret "Bot token" "TG_BOT_TOKEN")
+    # Reject obvious placeholders / dev fakes — these silently get persisted to
+    # /etc/agent-os/agent-os.env and break the bot at runtime with 401-from-Telegram.
+    # Real BotFather tokens never contain these strings.
+    if [[ "$TG_BOT_TOKEN" =~ (FAKE|fake|test_token|placeholder|PLACEHOLDER|EXAMPLE|123456789:AAH) ]]; then
+      warn "Token looks like a placeholder ('${TG_BOT_TOKEN:0:25}…'). Real BotFather tokens are random — re-run /newbot with @BotFather to get a real one."
+      continue
+    fi
     if [[ "$TG_BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
-      ok "Token format valid"
-      break
+      # Live-validate against Telegram getMe so we abort here instead of writing
+      # an invalid-but-format-correct token into the env file.
+      local _gm
+      _gm=$(curl -fsS --max-time 5 "https://api.telegram.org/bot${TG_BOT_TOKEN}/getMe" 2>/dev/null)
+      if echo "$_gm" | jq -e '.ok==true' >/dev/null 2>&1; then
+        ok "Token format valid · @$(echo "$_gm" | jq -r '.result.username')"
+        break
+      fi
+      warn "Token format OK but Telegram rejected it (revoked? typo?). Try again."
+      continue
     fi
     warn "Invalid format. Expected: 123456789:ABC...DEF (try again or Ctrl+C to abort)"
   done
@@ -1073,9 +1088,16 @@ EOF
     CLAUDE_CODE_OAUTH_TOKEN=$(ask_secret "Paste OAuth token (sk-ant-oat01-...)" "CLAUDE_CODE_OAUTH_TOKEN")
   fi
 
+  # Reject obvious placeholders / dev fakes — these silently get persisted to
+  # /etc/agent-os/agent-os.env and break operator at runtime with 401-from-Anthropic.
+  # Real OAuth tokens are random base64-ish payloads; placeholders contain words.
+  if [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ (FAKE|fake|test_token|placeholder|PLACEHOLDER|EXAMPLE) ]]; then
+    fail "OAuth token looks like a placeholder ('${CLAUDE_CODE_OAUTH_TOKEN:0:30}…'). Run 'claude setup-token' on your Mac to get a real one (sk-ant-oat01-…), then re-run this wizard with the real value."
+  fi
   # Validate format
-  if ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-oat[0-9]+-[A-Za-z0-9_-]+$ ]]; then
-    warn "Token format unexpected (expected sk-ant-oat01-...). Continuing anyway."
+  if ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-oat[0-9]+-[A-Za-z0-9_-]+$ ]] \
+     && ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-api[0-9]+-[A-Za-z0-9_-]+$ ]]; then
+    warn "Token format unexpected (expected sk-ant-oat01-… or sk-ant-api03-…). Continuing anyway, but operator will likely fail with 401."
   fi
 
   ###########################################################################

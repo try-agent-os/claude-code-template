@@ -30,6 +30,7 @@
   },
 
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
       "mcp__*",
       "Bash",
