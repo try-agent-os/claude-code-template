@@ -122,7 +122,11 @@ TEMPLATE_REPO="https://github.com/try-agent-os/claude-code-template"
 readonly SAGA_MCP_REPO="https://github.com/try-agent-os/saga-mcp"
 
 # Defaults
-WHISPER_MODEL="medium"
+# WHISPER_MODEL: respects env var, defaults to "tiny" (75MB, fast).
+# Bumping the default to medium added ~3min to install on s-2vcpu-4gb droplets
+# for users who never use voice transcription. tiny is the right starting
+# point; users who want better can re-run with WHISPER_MODEL=medium.
+WHISPER_MODEL="${WHISPER_MODEL:-tiny}"
 DISPATCHER_INTERVAL_SEC="2700"   # 45 min
 WITH_PLUGINS=""
 MINIMAL=0
@@ -1004,7 +1008,7 @@ exec_remote_setup_wizard() {
   PROJECT_NAME=$(ask "Project slug" "project_name" "myagentos")
   GIT_REMOTE=$(ask "Git remote (optional, blank to skip)" "git_remote" "")
   TIMEZONE=$(ask "Timezone (IANA)" "timezone" "Europe/Lisbon")
-  WHISPER_MODEL=$(ask "Whisper model (tiny|base|medium)" "whisper_model" "medium")
+  WHISPER_MODEL=$(ask "Whisper model (tiny|base|medium)" "whisper_model" "$WHISPER_MODEL")
 
   ###########################################################################
   # Step 4 — Telegram bot setup (BotFather hand-holding)
@@ -1525,7 +1529,11 @@ else
       TG_ADMIN_USER_IDS="$TG_USER_ID"  # legacy single-admin → seed allowlist
     fi
     GIT_REMOTE="${GIT_REMOTE:-$(state_get git_remote "")}"
-    WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model medium)}"
+    # WHISPER_MODEL: env var > state > "tiny" (lightest default).
+    # The env var must win unconditionally so non-interactive callers (Mac
+    # wizard / cloud-init) can override; previously this fell through to state
+    # too eagerly and clobbered WHISPER_MODEL=tiny passed via SSH.
+    WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model tiny)}"
     # Persist non-secret answers to state
     state_set project_name "$PROJECT_NAME"
     state_set timezone "$TIMEZONE"
@@ -1578,8 +1586,8 @@ else
       log "  --minimal: skipping Whisper model prompt (no telegram = no voice transcription)"
     else
       header "Whisper model"
-      info "tiny=75MB (fast, low quality), base=150MB (balanced), medium=1.5GB (default, full quality)"
-      WHISPER_MODEL=$(ask "Whisper model size" "whisper_model" "medium")
+      info "tiny=75MB (fast, low quality, default), base=150MB (balanced), medium=1.5GB (full quality)"
+      WHISPER_MODEL=$(ask "Whisper model size" "whisper_model" "$WHISPER_MODEL")
     fi
 
     header "Claude Code OAuth"
