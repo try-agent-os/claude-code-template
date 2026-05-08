@@ -88,5 +88,5 @@ sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)"
 ## Help / something broke
 
 - [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) — top symptoms with diagnoses.
-- `sudo bash /opt/agent-os/claude/scripts/verify.sh` — health check across 50+ checkpoints.
+- `sudo -u agent-os bash /opt/agent-os/claude/scripts/verify.sh` — health check across 50+ checkpoints. (Run as `agent-os`, not root — the script refuses to run as root because hook tests need to write to `agent-os`-owned `/tmp/agentos-hooks`.)
 - File an issue with the verify output: <https://github.com/try-agent-os/claude-code-template/issues>

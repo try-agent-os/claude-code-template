@@ -186,7 +186,7 @@ sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)"
 ## Still broken?
 
 Open an issue with:
-- `bash /opt/agent-os/claude/scripts/verify.sh` output
+- `sudo -u agent-os bash /opt/agent-os/claude/scripts/verify.sh` output (the script refuses to run as root)
 - `journalctl -u agent-os-operator.service -n 50 --no-pager`
 - `tmux capture-pane -t operator -p` while attached
 - The exact step number install.sh aborted at

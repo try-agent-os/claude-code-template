@@ -1362,8 +1362,8 @@ EOF
   # Optional verify.sh probe (existed in old wizard — keep for parity)
   if ssh "$SSH_ALIAS" "test -x /opt/agent-os/claude/scripts/verify.sh" 2>/dev/null; then
     info "Running verify.sh on remote..."
-    ssh "$SSH_ALIAS" "sudo bash /opt/agent-os/claude/scripts/verify.sh" 2>&1 | tail -20 \
-      || warn "verify.sh reported issues — full output: ssh $SSH_ALIAS 'sudo bash /opt/agent-os/claude/scripts/verify.sh'"
+    ssh "$SSH_ALIAS" "sudo -u agent-os bash /opt/agent-os/claude/scripts/verify.sh" 2>&1 | tail -20 \
+      || warn "verify.sh reported issues — full output: ssh $SSH_ALIAS 'sudo -u agent-os bash /opt/agent-os/claude/scripts/verify.sh'"
   fi
 
   ###########################################################################
@@ -1376,8 +1376,8 @@ EOF
   printf "\n"
   printf "  Try it:\n"
   printf "    1. Send any message to your bot on Telegram\n"
-  printf "    2. Or attach: %sssh %s -t 'sudo -u agent-os tmux attach -t operator'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
-  printf "    3. Check status: %sssh %s 'sudo bash /opt/agent-os/claude/scripts/verify.sh'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
+  printf "    2. Or attach: %sssh %s -t \"sudo nsenter -t \\\$(systemctl show -p MainPID --value agent-os-operator.service) -m -- sudo -u agent-os tmux attach -t operator\"%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
+  printf "    3. Check status: %sssh %s 'sudo -u agent-os bash /opt/agent-os/claude/scripts/verify.sh'%s\n" "$c_bold" "$SSH_ALIAS" "$c_reset"
   printf "\n"
   printf "  Re-run anytime: %sbash install.sh%s (resumes from state)\n" "$c_bold" "$c_reset"
   printf "  State: %s\n" "$DEPLOY_STATE"

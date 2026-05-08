@@ -389,7 +389,7 @@ check_os() {
 
   if is_root; then
     emit FAIL "os" "running as root — verify.sh refuses for safety" \
-      "Re-run as the agent-os user: sudo -u agent-os $(basename "$0")"
+      "Re-run as the agent-os user: sudo -u agent-os bash ${BASH_SOURCE[0]:-$0}"
     return 0
   fi
   emit PASS "os" "running as non-root user $(id -un 2>/dev/null || echo '?')"
