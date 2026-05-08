@@ -2314,20 +2314,32 @@ if [[ "${NO_FIREWALL:-0}" != 1 ]]; then
   step "extra: ingress hardening (UFW + fail2ban)"
 
   # Detect installer source IP for fail2ban allowlist.
-  # SSH_CLIENT format: "<client-ip> <client-port> <server-port>"
-  # SSH_CONNECTION format: "<client-ip> <client-port> <server-ip> <server-port>"
-  # Fall back to empty if neither is set (e.g. running locally on console).
+  # Three sources, in order:
+  #   1. $SSH_CLIENT — set by sshd, but sudo's env_reset strips it on Ubuntu.
+  #   2. $SSH_CONNECTION — same caveat.
+  #   3. `who am i` — reads utmp, which records the TTY's login source IP and
+  #      survives sudo because the TTY is the same as the original SSH session.
+  # The third path is the one that actually fires on `sudo bash install.sh`,
+  # which is the canonical invocation per cloud-init's MOTD.
+  # Format reminder:
+  #   SSH_CLIENT     = "<client-ip> <client-port> <server-port>"
+  #   SSH_CONNECTION = "<client-ip> <client-port> <server-ip> <server-port>"
+  #   who am i       = "<user> pts/0  2026-05-08 09:00 (<client-ip>)"
   INSTALLER_SOURCE_IP=""
   if [[ -n "${SSH_CLIENT:-}" ]]; then
     INSTALLER_SOURCE_IP="${SSH_CLIENT%% *}"
   elif [[ -n "${SSH_CONNECTION:-}" ]]; then
     INSTALLER_SOURCE_IP="${SSH_CONNECTION%% *}"
+  elif command -v who >/dev/null 2>&1; then
+    # LC_ALL=C to get a stable date format; awk parses the parenthesised IP.
+    INSTALLER_SOURCE_IP="$(LC_ALL=C who am i 2>/dev/null | \
+      sed -n 's/.*(\([^)]*\)).*/\1/p' | head -1)"
   fi
   # Validate it looks like an IPv4/IPv6 address; reject anything weird.
   if [[ -n "$INSTALLER_SOURCE_IP" ]]; then
     if ! [[ "$INSTALLER_SOURCE_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && \
        ! [[ "$INSTALLER_SOURCE_IP" =~ : ]]; then
-      warn "  ignoring suspicious SSH_CLIENT IP: $INSTALLER_SOURCE_IP"
+      warn "  ignoring suspicious source IP: $INSTALLER_SOURCE_IP"
       INSTALLER_SOURCE_IP=""
     fi
   fi
