@@ -1706,6 +1706,7 @@ render_unit() {
 }
 
 for unit in agent-os-saga.service \
+            agent-os-telegram-mcp.service \
             agent-os-dispatcher.service \
             agent-os-dispatcher.timer \
             agent-os-operator.service ; do
@@ -1951,11 +1952,15 @@ mark_step_completed 16
 ###############################################################################
 step "17/18 enable + start units"
 
-# NOTE: claude-peers + telegram no longer have dedicated systemd units —
-# they are stdio MCP plugins, spawned by Claude Code itself per session.
-# claude-peers' broker daemon is auto-bootstrapped from server.ts on first
-# spawn (see plugins/claude-peers/server.ts).
-UNITS=(agent-os-saga.service agent-os-dispatcher.timer)
+# NOTE: claude-peers is an stdio MCP plugin, spawned by Claude Code itself per
+# session — its broker daemon auto-bootstraps from server.ts on first spawn.
+# telegram-mcp HOWEVER must run as a single dedicated systemd service: it's an
+# HTTP/SSE bridge to Telegram's getUpdates long-poll, and only ONE poller can
+# hold the long-poll lock at a time. Running it as a stdio MCP spawned by claude
+# also fails because telegram-mcp pushes channel notifications by iterating
+# `activeSessions` — a map populated only by SSE clients, not stdio. Operator
+# connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
+UNITS=(agent-os-saga.service agent-os-telegram-mcp.service agent-os-dispatcher.timer)
 if [[ "${MINIMAL}" == 0 ]]; then
   UNITS+=(agent-os-operator.service)
 fi

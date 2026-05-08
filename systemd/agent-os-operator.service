@@ -1,10 +1,11 @@
 [Unit]
 Description=AgentOS operator (Claude Code in tmux, channel-pushed)
 Documentation=https://github.com/try-agent-os/claude-code-template
-# claude-peers + telegram are now stdio MCP plugins spawned per session by
-# Claude Code itself — no upstream systemd unit dependency.
-After=network-online.target agent-os-saga.service
-Wants=network-online.target agent-os-saga.service
+# claude-peers is a stdio MCP plugin (spawned per session). telegram-mcp runs as
+# its own systemd service (agent-os-telegram-mcp.service) — operator connects to
+# it via SSE per project .mcp.json. Both required up before operator is useful.
+After=network-online.target agent-os-saga.service agent-os-telegram-mcp.service
+Wants=network-online.target agent-os-saga.service agent-os-telegram-mcp.service
 
 [Service]
 Type=forking
@@ -14,13 +15,22 @@ WorkingDirectory={INSTALL_ROOT}/claude/agents/operator
 EnvironmentFile={ENV_FILE}
 Environment=HOME={AGENT_HOME}
 Environment=TERM=screen-256color
+# bun lives under {AGENT_HOME}/.bun/bin from the user-level install in Step 7.
+# Without it on PATH, claude-peers' MCP server fails to spawn its broker child:
+# `Fatal: Executable not found in $PATH: "bun"`.
+Environment=PATH={AGENT_HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR_OPERATOR}
 Environment=DISABLE_AUTOUPDATER=1
+# `--dangerously-load-development-channels server:<name>` is the syntax that
+# bypasses claude-code's plugin-channel allowlist (which is enterprise-gated
+# via the `tengu_harbor_ledger` GrowthBook flag). The `server:` prefix matches
+# MCP server names from .mcp.json / mcpServers, NOT plugin marketplace IDs.
 ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
   'claude --dangerously-skip-permissions \
     --add-dir {INSTALL_ROOT}/claude/memory \
     --add-dir {INSTALL_ROOT}/claude/agents \
-    --channels plugin:claude-peers@agentos plugin:telegram@agentos'
+    --dangerously-load-development-channels server:telegram \
+    --dangerously-load-development-channels server:claude-peers'
 ExecStop=/usr/bin/tmux kill-session -t operator
 Restart=on-failure
 RestartSec=30

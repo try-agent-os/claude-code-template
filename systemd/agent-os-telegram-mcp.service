@@ -1,0 +1,34 @@
+[Unit]
+Description=AgentOS telegram-mcp (HTTP/SSE bot bridge)
+Documentation=https://github.com/try-agent-os/claude-code-template
+# Single Telegram bot poller — multiple instances would conflict on getUpdates
+# long-polling lock and one would always fail with 409 conflicts.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={AGENT_USER}
+Group={AGENT_USER}
+WorkingDirectory={INSTALL_ROOT}/claude/plugins/telegram
+EnvironmentFile={ENV_FILE}
+Environment=PORT=3848
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node {INSTALL_ROOT}/claude/plugins/telegram/dist/index.js
+Restart=always
+RestartSec=5
+
+# Hardening — telegram-mcp does NOT use tmux/utempter, so NoNewPrivileges=yes
+# is fine here (unlike operator).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude/plugins/telegram
+
+# Logging — telegram-mcp prints rich logs (incoming msgs, admin seed, bot events).
+StandardOutput=append:{LOG_DIR}/telegram-mcp.log
+StandardError=append:{LOG_DIR}/telegram-mcp-errors.log
+
+[Install]
+WantedBy=multi-user.target
