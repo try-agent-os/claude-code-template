@@ -6,7 +6,7 @@
 
 The agent listens, replies, runs tools on your behalf, and survives reboots. Bring your Anthropic OAuth token, click a button, send your bot a message.
 
-[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fclaude-code-template%2Fmain%2Fcloud-init.yaml)
+[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&refcode=6f9a0892dd0a&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fclaude-code-template%2Fmain%2Fcloud-init.yaml)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/try-agent-os/claude-code-template?label=release)](https://github.com/try-agent-os/claude-code-template/releases)
