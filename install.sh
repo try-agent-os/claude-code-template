@@ -904,14 +904,22 @@ exec_remote_setup_wizard() {
   fi
 
   # gh CLI — required for personal-repo dual-deployment (saga #814) unless
-  # explicitly opted out via --skip-personal-repo. Hard fail here so we don't
-  # discover it 4 prompts later.
+  # opted out via --skip-personal-repo. Auto-install via brew if missing
+  # (saga #815: wizard does the work, user doesn't pre-prepare).
   if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
-    if ! command -v gh &>/dev/null; then
-      fail "GitHub CLI ('gh') not found. Install: brew install gh, then 'gh auth login'. Or pass --skip-personal-repo to deploy without a personal fork (the wizard will use the public template repo directly)."
+    if ! command -v gh >/dev/null 2>&1; then
+      ensure_brew_cli gh gh "GitHub CLI" || fail "GitHub CLI install was declined. Re-run with --skip-personal-repo to deploy without a personal fork."
     fi
     if ! gh auth status &>/dev/null; then
-      fail "GitHub CLI not authenticated. Run 'gh auth login' first, then re-run this wizard. Or pass --skip-personal-repo to deploy without a personal fork."
+      info "GitHub CLI is installed but not authenticated."
+      printf "  Run 'gh auth login' now? [%sY%s/n]: " "$c_green" "$c_reset"
+      local gh_auth_choice
+      read -r gh_auth_choice
+      if [ "$(lower "$gh_auth_choice")" != "n" ]; then
+        gh auth login || fail "gh auth login failed. Re-run wizard after fixing."
+      else
+        fail "Cannot create personal repo without gh auth. Re-run with 'gh auth login' or --skip-personal-repo."
+      fi
     fi
     GH_USER=$(gh api user --jq .login 2>/dev/null || echo "")
     if [[ -z "$GH_USER" ]]; then
