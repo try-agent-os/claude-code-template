@@ -74,6 +74,7 @@ UNITS=(
   agent-os-dispatcher.service
   agent-os-operator.service
   agent-os-saga.service
+  agent-os-telegram-mcp.service
 )
 # Legacy units (pre-plugin-migration). Kept here for cleanup on upgrade.
 LEGACY_UNITS=(
@@ -136,6 +137,22 @@ remove_agentos_marketplace() {
   fi
 }
 remove_agentos_marketplace "${AGENT_HOME}/.claude/settings.json"
+
+###############################################################################
+# fail2ban allowlist cleanup (always — it's a deploy artefact, not user data)
+###############################################################################
+# install.sh writes /etc/fail2ban/jail.d/agent-os.local with our jail config
+# (and an ignoreip allowlist for the installer's source IP). Remove it here
+# so fail2ban no longer carries AgentOS-specific config after uninstall.
+# UFW rules are left untouched — they're system-wide and the user may want
+# the SSH-allow rule to persist.
+if [[ -f /etc/fail2ban/jail.d/agent-os.local ]]; then
+  rm -f /etc/fail2ban/jail.d/agent-os.local
+  log "  removed /etc/fail2ban/jail.d/agent-os.local (AgentOS jail config)"
+  if command -v fail2ban-client >/dev/null 2>&1 && systemctl is-active --quiet fail2ban; then
+    systemctl reload fail2ban 2>/dev/null || true
+  fi
+fi
 
 ###############################################################################
 # PURGE
