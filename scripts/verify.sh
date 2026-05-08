@@ -79,6 +79,14 @@ else
   fi
   unset _verify_self
 fi
+# Export so every hook subprocess inherits it. The hook smoke tests below
+# use the `VAR=val cmd1 | cmd2` prefix-syntax which only sets VAR for cmd1
+# (printf), not cmd2 (the hook) — so without this export the hooks fall over
+# with `CLAUDE_PROJECT_DIR: unbound variable` when `_common.sh` is sourced,
+# and the test reports a false FAIL even though the hook is fine. Exporting
+# here also makes `bash /opt/agent-os/claude/scripts/verify.sh` work without
+# the caller having to pre-export it themselves.
+export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 
 # OS detection
 UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
