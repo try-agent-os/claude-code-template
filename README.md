@@ -3,6 +3,24 @@
 > One-command bootstrap for [AgentOS](https://github.com/try-agent-os): a long-running Claude Code agent stack on a Linux VPS — operator + heartbeat dispatcher + saga task tracker + bundled plugin marketplace + project hooks + managed policy.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&refcode=REFCODE_PLACEHOLDER&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fclaude-code-template%2Fmain%2Fcloud-init.yaml)
+
+---
+
+## Quickstart — Deploy to DigitalOcean (5 minutes)
+
+[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&refcode=REFCODE_PLACEHOLDER&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fclaude-code-template%2Fmain%2Fcloud-init.yaml)
+
+Click the button → DigitalOcean's droplet creation page opens with cloud-init pre-loaded. Pick a size (s-2vcpu-4gb minimum recommended), region, and your SSH key. Submit. Once the droplet's up, SSH in:
+
+```bash
+ssh root@<droplet-ip>
+sudo bash /opt/agent-os-bootstrap/install.sh
+```
+
+The wizard prompts for your Telegram BotFather token (from `@BotFather` → `/newbot`) and your Anthropic OAuth token (`claude setup-token` on your local Mac → paste). Five minutes later your bot is live and replying.
+
+> The `user_data` param above points at [`cloud-init.yaml`](./cloud-init.yaml) — apt prereqs + repo clone, no secrets in URL. Secrets stay local to your terminal during the install wizard.
 
 ---
 
