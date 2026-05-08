@@ -1172,8 +1172,42 @@ EOF
     state_set "user_repo_local" "$USER_REPO_LOCAL"
     state_set "auto_sync_vps" "$AUTO_SYNC_VPS"
 
+    # Create the private repo + clone template locally + push.
+    # Idempotent: if the repo already exists (re-run case), skip create. If
+    # the local clone already exists, fetch + reset hard to template's main.
+    if gh repo view "${GH_USER}/${USER_REPO_NAME}" &>/dev/null; then
+      info "Repo ${GH_USER}/${USER_REPO_NAME} already exists on GitHub — skipping create"
+    else
+      info "Creating private repo ${GH_USER}/${USER_REPO_NAME}..."
+      if ! gh repo create "${GH_USER}/${USER_REPO_NAME}" \
+           --private \
+           --description "AgentOS deployment for @${GH_USER} (forked from try-agent-os/claude-code-template)" \
+           --disable-issues=false \
+           &>/dev/null; then
+        fail "gh repo create failed. Check 'gh auth status' permissions (needs 'repo' scope)."
+      fi
+      ok "  created github.com/${GH_USER}/${USER_REPO_NAME} (private)"
+    fi
+
+    # Local clone — clone the public template into USER_REPO_LOCAL, swap origin
+    # to the user's new private repo, push.
+    if [[ -d "${USER_REPO_LOCAL}/.git" ]]; then
+      info "Local clone already at ${USER_REPO_LOCAL} — fetching latest"
+      ( cd "${USER_REPO_LOCAL}" && git fetch origin main &>/dev/null ) || warn "  fetch failed (continuing)"
+    else
+      info "Cloning template to ${USER_REPO_LOCAL}..."
+      mkdir -p "$(dirname "${USER_REPO_LOCAL}")"
+      git clone --depth 1 https://github.com/try-agent-os/claude-code-template "${USER_REPO_LOCAL}" &>/dev/null \
+        || fail "Failed to clone template into ${USER_REPO_LOCAL}"
+      # Swap origin to the user's private repo
+      ( cd "${USER_REPO_LOCAL}" \
+        && git remote set-url origin "${USER_REPO_URL}" \
+        && git push -u origin main &>/dev/null ) \
+        || warn "  initial push to ${USER_REPO_HTTPS} failed — push manually with 'cd ${USER_REPO_LOCAL} && git push -u origin main'"
+      ok "  cloned + pushed initial template to ${USER_REPO_HTTPS}"
+    fi
+
     ok "Personal repo: ${USER_REPO_HTTPS} → ${USER_REPO_LOCAL} (auto-sync: $([[ "$AUTO_SYNC_VPS" == 1 ]] && echo on || echo off))"
-    info "  (Repo creation + initial push happens during Step 5 remote install)"
   else
     info "Skipping personal repo (--skip-personal-repo set) — VPS will clone directly from try-agent-os/claude-code-template."
   fi
