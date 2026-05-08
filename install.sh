@@ -446,6 +446,7 @@ for arg in "$@"; do
     --whisper=*) WHISPER_MODEL="${arg#--whisper=}" ;;
     --harden) HARDEN=1 ;;
     --no-firewall) NO_FIREWALL=1 ;;
+    --skip-personal-repo) SKIP_PERSONAL_REPO=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
     --resume) ;; # no-op; whole script is idempotent
     --reset) RESET=1 ;;
@@ -902,6 +903,23 @@ exec_remote_setup_wizard() {
     ok "Claude Code: $(claude --version 2>&1 | head -1)"
   fi
 
+  # gh CLI — required for personal-repo dual-deployment (saga #814) unless
+  # explicitly opted out via --skip-personal-repo. Hard fail here so we don't
+  # discover it 4 prompts later.
+  if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
+    if ! command -v gh &>/dev/null; then
+      fail "GitHub CLI ('gh') not found. Install: brew install gh, then 'gh auth login'. Or pass --skip-personal-repo to deploy without a personal fork (the wizard will use the public template repo directly)."
+    fi
+    if ! gh auth status &>/dev/null; then
+      fail "GitHub CLI not authenticated. Run 'gh auth login' first, then re-run this wizard. Or pass --skip-personal-repo to deploy without a personal fork."
+    fi
+    GH_USER=$(gh api user --jq .login 2>/dev/null || echo "")
+    if [[ -z "$GH_USER" ]]; then
+      fail "Could not determine your GitHub username from 'gh api user'. Re-auth with 'gh auth login'."
+    fi
+    ok "GitHub CLI authenticated as @${GH_USER}"
+  fi
+
   # ~/.ssh/config writable
   if [[ ! -d ~/.ssh ]]; then
     log "Creating ~/.ssh directory..."
@@ -1099,6 +1117,57 @@ EOF
   if ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-oat[0-9]+-[A-Za-z0-9_-]+$ ]] \
      && ! [[ "$CLAUDE_CODE_OAUTH_TOKEN" =~ ^sk-ant-api[0-9]+-[A-Za-z0-9_-]+$ ]]; then
     warn "Token format unexpected (expected sk-ant-oat01-… or sk-ant-api03-…). Continuing anyway, but operator will likely fail with 401."
+  fi
+
+  ###########################################################################
+  # Step 4d — Personal repo setup (saga #814 dual deployment)
+  #
+  # Pattern: clone the template into a private fork on the user's GitHub,
+  # also clone locally to a Mac path, point the VPS at that fork. User edits
+  # locally, commits, pushes; VPS auto-pulls every 5min via cron.
+  #
+  # gh CLI was already verified up in pre-flight — fail-fast there.
+  ###########################################################################
+  USER_REPO_URL=""        # set below if SKIP_PERSONAL_REPO != 1
+  USER_REPO_LOCAL=""      # local Mac clone path
+  AUTO_SYNC_VPS=1         # cron */5 git pull on VPS
+
+  if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
+    header "Step 4d: Personal repo (private fork on your GitHub)"
+
+    # Default repo name: 'agentos'. Suggest -2/-3/etc. on collision.
+    local default_repo="agentos"
+    while gh repo view "${GH_USER}/${default_repo}" &>/dev/null; do
+      # Already exists — increment suffix
+      if [[ "$default_repo" =~ -([0-9]+)$ ]]; then
+        local n="${BASH_REMATCH[1]}"
+        default_repo="${default_repo%-*}-$((n+1))"
+      else
+        default_repo="${default_repo}-2"
+      fi
+    done
+
+    USER_REPO_NAME=$(ask "GitHub repo name under @${GH_USER}" "user_repo_name" "$default_repo")
+    USER_REPO_URL="git@github.com:${GH_USER}/${USER_REPO_NAME}.git"
+    USER_REPO_HTTPS="https://github.com/${GH_USER}/${USER_REPO_NAME}"
+
+    # Local Mac clone path (where you'll edit memory/, agent CLAUDE.md, etc.)
+    USER_REPO_LOCAL=$(ask "Local clone path (Mac)" "user_repo_local" "$HOME/Workspaces/${USER_REPO_NAME}")
+
+    # Auto-sync toggle — VPS cron pulls every 5min from your repo.
+    printf "  Auto-sync VPS from your repo (cron every 5min)? [%sY%s/n]: " "$c_green" "$c_reset"
+    local sync_choice
+    read -r sync_choice
+    [ "$(lower "$sync_choice")" = "n" ] && AUTO_SYNC_VPS=0
+
+    state_set "user_repo_name" "$USER_REPO_NAME"
+    state_set "user_repo_local" "$USER_REPO_LOCAL"
+    state_set "auto_sync_vps" "$AUTO_SYNC_VPS"
+
+    ok "Personal repo: ${USER_REPO_HTTPS} → ${USER_REPO_LOCAL} (auto-sync: $([[ "$AUTO_SYNC_VPS" == 1 ]] && echo on || echo off))"
+    info "  (Repo creation + initial push happens during Step 5 remote install)"
+  else
+    info "Skipping personal repo (--skip-personal-repo set) — VPS will clone directly from try-agent-os/claude-code-template."
   fi
 
   ###########################################################################
