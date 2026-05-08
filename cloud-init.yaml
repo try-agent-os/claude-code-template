@@ -1,0 +1,66 @@
+#cloud-config
+# AgentOS cloud-init — used by the "Deploy to DigitalOcean" button in README
+# and any other one-click cloud provider that supports cloud-init user_data.
+#
+# Two-stage flow:
+#   1. cloud-init (this file) runs at first boot: installs apt prereqs, clones
+#      the template, and prints connection instructions to /etc/motd.
+#   2. User SSH's in and runs `sudo bash /opt/agent-os-bootstrap/install.sh`.
+#      The wizard prompts for TG_BOT_TOKEN / CLAUDE_CODE_OAUTH_TOKEN / etc.
+#
+# Why two-stage? Cloud providers don't safely template secrets into user_data
+# from a URL — the deploy URL would have to leak tokens through the browser
+# history. Cloud-init does the prep that doesn't need secrets; the install
+# wizard prompts for them on the user's terminal under their control.
+#
+# To pre-fill non-secret answers, set them as env vars in /etc/profile.d/
+# before the user runs install.sh — they'll be picked up via Step 2 wizard
+# state.
+
+package_update: true
+package_upgrade: false  # full upgrade adds 2-3 minutes; install.sh runs apt-get update anyway
+
+packages:
+  - curl
+  - git
+  - ca-certificates
+  - jq
+
+write_files:
+  - path: /etc/motd
+    permissions: '0644'
+    owner: root:root
+    content: |
+
+      ┌─────────────────────────────────────────────────────────────┐
+      │ AgentOS template provisioned — finish setup with:           │
+      │                                                              │
+      │   sudo bash /opt/agent-os-bootstrap/install.sh              │
+      │                                                              │
+      │ The wizard will prompt for:                                  │
+      │   • Telegram BotFather token (from @BotFather → /newbot)    │
+      │   • Anthropic OAuth token (run `claude setup-token` on Mac) │
+      │   • Optional: project slug, timezone, whisper model         │
+      │                                                              │
+      │ Once finished, send any message to your Telegram bot and    │
+      │ the operator will reply.                                     │
+      │                                                              │
+      │ Docs: https://github.com/try-agent-os/claude-code-template  │
+      └─────────────────────────────────────────────────────────────┘
+
+  - path: /etc/profile.d/agent-os-bootstrap.sh
+    permissions: '0644'
+    owner: root:root
+    content: |
+      # AgentOS bootstrap path — point users at the install wizard on first login.
+      export AGENT_OS_BOOTSTRAP=/opt/agent-os-bootstrap
+      if [ -d "$AGENT_OS_BOOTSTRAP" ] && [ ! -f /etc/agent-os/install.state.json ]; then
+        echo "AgentOS template ready. Run: sudo bash $AGENT_OS_BOOTSTRAP/install.sh"
+      fi
+
+runcmd:
+  - mkdir -p /opt/agent-os-bootstrap
+  - git clone --depth 1 https://github.com/try-agent-os/claude-code-template /opt/agent-os-bootstrap || true
+  - chmod +x /opt/agent-os-bootstrap/install.sh
+  # Drop a hint into /root/.bash_profile too, in case MOTD is suppressed.
+  - echo '[ -f /etc/profile.d/agent-os-bootstrap.sh ] && . /etc/profile.d/agent-os-bootstrap.sh' >> /root/.bashrc
