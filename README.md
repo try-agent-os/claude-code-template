@@ -19,9 +19,13 @@ The agent listens, replies, runs tools on your behalf, and survives reboots. Bri
 
 ---
 
+> **Client requires macOS.** The install wizard runs on a Mac (uses `brew`, `gh`, `osxkeychain`). The droplet itself runs Ubuntu/Debian. Linux/Windows clients are planned (saga #815) — for now please run the wizard from a Mac.
+
 ## What this is
 
 AgentOS turns Claude Code from a CLI you run locally into a **persistent agent that lives on your server**, listens to a Telegram bot, executes tools, and remembers context across sessions. It's Claude Code with the supervision layer, the channel routing, the plugin allowlist plumbing, and the deploy ergonomics already wired up.
+
+It also creates a **private GitHub fork of the template under your account**, clones it to a local Mac path you choose, and installs an auto-sync cron job on the droplet — so editing `memory/owner.md` in your editor on the Mac, committing, pushing, has the operator picking up the change within 5 min. (Saga #814.)
 
 You bring:
 - An Anthropic account (Pro / Max / Team — channel push works on personal plans, no enterprise required)
@@ -40,16 +44,23 @@ You get:
 ## 5-minute deploy
 
 ```bash
-# Click the deploy button → ssh in once it's up:
-ssh root@<your-droplet-ip>
-sudo bash /opt/agent-os-bootstrap/install.sh
-# ...wizard prompts for Telegram bot token + Anthropic OAuth token...
-# Send a message to your bot. It replies.
+# On your Mac (requires brew, gh CLI auto-installed by wizard):
+curl -fsSL https://raw.githubusercontent.com/try-agent-os/claude-code-template/main/install.sh | bash
+
+# Wizard handles:
+#   • brew + gh + doctl auto-install
+#   • create private fork on your GitHub
+#   • clone to ~/Workspaces/agentos (path is a prompt)
+#   • provision DigitalOcean droplet
+#   • SSH in, run 18-step install
+#   • prompt for Telegram bot token + Anthropic OAuth
+#   • configure auto-sync cron between your fork and the droplet
+# Total time ~10-12 min. Send a message to your bot. It replies.
 ```
 
 Full step-by-step: [QUICKSTART.md](./QUICKSTART.md)
 
-Prefer to provision the VPS yourself, or run on existing infra? See [Manual install](#manual-install) below.
+Already have a droplet, or prefer manual control? See [Manual install](#manual-install) below.
 
 ---
 
