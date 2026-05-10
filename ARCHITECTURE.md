@@ -238,6 +238,28 @@ plugins/
 
 The two channel plugins (`claude-peers`, `telegram`) are **single-server** plugins — one stdio MCP server exposes both tool calls AND the `claude/channel` capability. Operator gets push (when launched with `--channels plugin:NAME@agentos`); other agents that don't pass `--channels` see the same plugin as a tools-only MCP server.
 
+### Workspace submodules (`workspaces/`)
+
+A hub fork can use a fractal workspace model: each workspace is a folder `workspaces/<slug>/` with its own `CLAUDE.md`. Inside a workspace there may be one or more git submodules:
+
+**Category A — Workspace AgentOS instance** (`workspaces/<slug>/claude/`):
+- Submodule pointing at a separate repo that itself follows the AgentOS layout (its own `CLAUDE.md`, `agents/`, `memory/`, etc).
+- Canonical store for workspace-specific data — content that belongs to one workspace lives here, not in the hub.
+- Future standalone AgentOS instance — when the workspace "graduates", the submodule becomes an independent AgentOS deployment on its own host.
+- Hub workers write into the submodule through a generic sync workflow:
+  - Skills reference paths like `workspaces/<slug>/claude/...`.
+  - Dispatcher Step 7 (after the hub commit/push) iterates every `workspaces/*/claude/` submodule (excluding `workspaces/agent-os/claude` itself — the template) and calls `scripts/sync-workspace-submodule.sh <slug>`.
+  - The script is idempotent: auto-commit + push in the submodule, then bump the pointer in the hub + push the hub. Push retries with exponential backoff.
+
+**Category B — Code repos** (`workspaces/<slug>/<repo>/` where `<repo>` != `claude`):
+- Plain code submodules (e.g. application monorepos, MCP servers).
+- No auto-sync workflow — normal dev flow with PR/merge.
+
+**Workspace lifecycle (3 stages):**
+1. **No agent submodule** — only `CLAUDE.md` + optional code submodules.
+2. **Hub-managed agent submodule** — `claude/` is wired up; hub workers write through the sync workflow.
+3. **Standalone** — the agent submodule runs on its own host as an independent AgentOS instance. The hub either drops the reference or keeps it read-only.
+
 ### Enablement
 
 `enabledPlugins` lives in `managed-settings.json` (org-wide enforcement):
