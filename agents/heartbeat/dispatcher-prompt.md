@@ -230,6 +230,20 @@ Skip this step.
 
 ```bash
 cd ../.. && git add memory/ && git diff --staged --quiet || (git commit -m "dispatcher: cycle #N" && git push)
+
+# Sync workspace AgentOS submodules (category A) — workers may have written
+# into workspaces/<slug>/claude/... during this cycle. The generic sync
+# script auto-commits + pushes the submodule, then bumps the pointer in
+# the hub and pushes the hub.
+# Skip workspaces/agent-os/claude — that one is the upstream template, not
+# a workspace AgentOS instance.
+for slug in $(ls workspaces/ 2>/dev/null); do
+  if [ -d "workspaces/${slug}/claude/.git" ] || [ -f "workspaces/${slug}/claude/.git" ]; then
+    if [ "${slug}" != "agent-os" ]; then
+      ./scripts/sync-workspace-submodule.sh "${slug}" 2>&1 | tail -5 || true
+    fi
+  fi
+done
 ```
 
 Replace `#N` with the current heartbeat_count.
