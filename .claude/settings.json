@@ -201,10 +201,5 @@
         ]
       }
     ]
-  },
-
-  "attribution": {
-    "commit": true,
-    "pr": true
   }
 }

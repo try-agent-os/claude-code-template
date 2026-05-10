@@ -36,6 +36,9 @@ dispatcher.log
 saga-mcp.log
 telegram-mcp*.log
 *.session.jsonl
+/.claude/audit.log
+/memory/sessions.log
+/memory/worker-activity.log
 
 # Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
 .env
