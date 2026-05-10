@@ -1812,6 +1812,32 @@ else
   log "  user ${AGENT_USER} exists"
 fi
 
+# Sudoers — passwordless root for self-managing AgentOS.
+# Without this, the Claude sysadmin session inside the agent-os tmux cannot
+# restart systemd units, install packages, edit /etc/ files, etc. — every
+# `sudo` prompts for a password that the non-interactive session can't
+# provide. The user is system-only (uid<1000), only reachable via the SSH
+# key configured in /home/agent-os/.ssh/authorized_keys, and all production
+# services already run as agent-os via systemd, so escalation surface is
+# narrow. Lock with 0440 + visudo validation; rollback on syntax error.
+SUDOERS_FILE="/etc/sudoers.d/${AGENT_USER}"
+if [[ ! -f "$SUDOERS_FILE" ]]; then
+  cat > "$SUDOERS_FILE" <<EOF
+# Passwordless sudo for ${AGENT_USER} — required so the Claude sysadmin
+# session inside tmux can manage the system without interactive prompts.
+# Installed by claude-code-template install.sh (Step 6).
+${AGENT_USER} ALL=(ALL) NOPASSWD: ALL
+EOF
+  chmod 0440 "$SUDOERS_FILE"
+  if ! visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
+    rm -f "$SUDOERS_FILE"
+    fail "sudoers syntax check failed — ${SUDOERS_FILE} removed"
+  fi
+  log "  installed ${SUDOERS_FILE} (NOPASSWD ALL)"
+else
+  log "  sudoers ${SUDOERS_FILE} exists"
+fi
+
 # Standard dirs
 # NOTE: telegram-mcp's messages.db used to live in a dedicated cwd dir
 # (${STATE_DIR}/telegram-mcp). With the plugin model Claude Code spawns the
