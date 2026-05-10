@@ -1857,6 +1857,13 @@ install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "$CC_DIR_OPERATOR" "$CC_DIR
 # CLAUDE_CONFIG_DIR isn't honoured by every codepath (bun cache, etc.).
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "${AGENT_HOME}/.config"
 
+# ${AGENT_HOME}/.tmux holds the operator tmux socket so it survives
+# PrivateTmp=yes and an interactive shell can attach via `tmux -S
+# ~/.tmux/operator.sock attach -t operator`. Same 226/NAMESPACE constraint
+# as .config — must exist before the unit starts; can't ExecStartPre=mkdir
+# because ProtectHome=read-only would block it.
+install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "${AGENT_HOME}/.tmux"
+
 # Now that ETC_DIR is owned root:agent-os, fix state file ownership if it pre-existed
 if [ -f "$STATE_FILE" ]; then
   chown root:"$AGENT_USER" "$STATE_FILE" 2>/dev/null || true

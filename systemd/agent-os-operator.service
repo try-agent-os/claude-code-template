@@ -21,23 +21,29 @@ Environment=TERM=screen-256color
 Environment=PATH={AGENT_HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=CLAUDE_CONFIG_DIR={CLAUDE_CONFIG_DIR_OPERATOR}
 Environment=DISABLE_AUTOUPDATER=1
+# Tmux socket lives in $HOME (not /tmp) so PrivateTmp=yes can stay on while
+# still letting an interactive shell attach: `tmux -S ~/.tmux/operator.sock attach -t operator`.
+# {AGENT_HOME}/.tmux must exist before this unit starts — install.sh creates
+# it. We can't ExecStartPre=/bin/mkdir here because ProtectHome=read-only
+# blocks the mkdir even with ReadWritePaths={AGENT_HOME}/.tmux (the path
+# must exist for ReadWritePaths to take effect).
 # `--dangerously-load-development-channels server:<name>` is the syntax that
 # bypasses claude-code's plugin-channel allowlist (which is enterprise-gated
 # via the `tengu_harbor_ledger` GrowthBook flag). The `server:` prefix matches
 # MCP server names from .mcp.json / mcpServers, NOT plugin marketplace IDs.
-ExecStart=/usr/bin/tmux new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
+ExecStart=/usr/bin/tmux -S {AGENT_HOME}/.tmux/operator.sock new-session -d -s operator -c {INSTALL_ROOT}/claude/agents/operator \
   'claude --dangerously-skip-permissions \
     --add-dir {INSTALL_ROOT}/claude/memory \
     --add-dir {INSTALL_ROOT}/claude/agents \
     --dangerously-load-development-channels server:telegram \
     --dangerously-load-development-channels server:claude-peers'
-ExecStop=/usr/bin/tmux kill-session -t operator
+ExecStop=/usr/bin/tmux -S {AGENT_HOME}/.tmux/operator.sock kill-session -t operator
 # Auto-dismiss the "Loading development channels" warning dialog. claude-code
 # shows it every session when --dangerously-load-development-channels is
 # passed; no persistence flag exists in the binary. Default option is
 # "1. I am using this for local development" so a single Enter advances.
 # Backgrounded (`&`) and disowned so this Post step exits immediately.
-ExecStartPost=/bin/bash -c '(sleep 7 && /usr/bin/tmux send-keys -t operator Enter 2>/dev/null) & disown'
+ExecStartPost=/bin/bash -c '(sleep 7 && /usr/bin/tmux -S {AGENT_HOME}/.tmux/operator.sock send-keys -t operator Enter 2>/dev/null) & disown'
 Restart=on-failure
 RestartSec=30
 
@@ -50,7 +56,7 @@ NoNewPrivileges=no
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {CLAUDE_CONFIG_DIR_OPERATOR} {AGENT_HOME}/.config
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {CLAUDE_CONFIG_DIR_OPERATOR} {AGENT_HOME}/.config {AGENT_HOME}/.tmux
 
 # Logging
 StandardOutput=append:{LOG_DIR}/operator.log
