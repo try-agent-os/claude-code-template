@@ -1991,13 +1991,15 @@ for unit in agent-os-saga.service \
             agent-os-telegram-mcp.service \
             agent-os-dispatcher.service \
             agent-os-dispatcher.timer \
-            agent-os-operator.service ; do
+            agent-os-operator.service \
+            agent-os-operator-watchdog.service \
+            agent-os-operator-watchdog.timer ; do
   src="${TEMPLATE_DIR}/systemd/${unit}"
   if [[ ! -f "$src" ]]; then
     warn "  template missing: $src — skipping"
     continue
   fi
-  if [[ "${MINIMAL}" == 1 ]] && [[ "$unit" == "agent-os-operator.service" ]]; then
+  if [[ "${MINIMAL}" == 1 ]] && [[ "$unit" == agent-os-operator* ]]; then
     log "  --minimal: skipping $unit"
     continue
   fi
@@ -2244,7 +2246,7 @@ step "17/18 enable + start units"
 # connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
 UNITS=(agent-os-saga.service agent-os-telegram-mcp.service agent-os-dispatcher.timer)
 if [[ "${MINIMAL}" == 0 ]]; then
-  UNITS+=(agent-os-operator.service)
+  UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
 fi
 
 systemctl enable --now "${UNITS[@]}"
