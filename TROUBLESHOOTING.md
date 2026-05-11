@@ -183,10 +183,10 @@ sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)"
 
 `Ctrl+B D` to detach. To peek without attaching, swap `attach -t operator` for `capture-pane -t operator -p`.
 
-## claude TUI renders monochrome inside zellij (status-bar still colored)
+## claude TUI renders monochrome (status-bar / `ls --color` still colored)
 
 ### Symptom
-You're hosting an interactive `claude` session inside a zellij pane (some deployments run sysadmin this way instead of tmux). Zellij's own UI — status bar, pane frames — is colored. `ls --color=always` inside any zellij pane prints with colors. But the claude TUI itself renders in a single foreground color: borders, syntax, diff highlights are all the same shade. Switching `theme` in `~/.claude/settings.json` (`dark` ↔ `light` ↔ `*-daltonized`) changes nothing.
+The claude TUI renders in a single foreground color: borders, syntax, diff highlights are all the same shade. Everything else in the same terminal — shell prompt, `ls --color=always`, zellij/tmux status bar — stays colored. Switching `theme` in `~/.claude/settings.json` (`dark` ↔ `light` ↔ `*-daltonized`) changes nothing. Reproduces in any container (zellij, tmux, bare SSH) as long as the SSH client doesn't forward 24-bit escapes — Termius is the canonical trigger; the same happens with several mobile/iPad SSH apps.
 
 ### Diagnosis
 Run from inside the claude pane:
@@ -196,30 +196,29 @@ ZPID=$(pgrep -f "/.local/bin/claude --dangerously"); cat /proc/$ZPID/environ | t
 If you see `TERM=xterm-256color` and `COLORTERM=truecolor`, env is "correct" — and that's the trap.
 
 ### Root cause
-chalk (under Ink, under claude's TUI) reads `COLORTERM=truecolor` and emits 24-bit escape sequences (`ESC[38;2;R;G;Bm`). Zellij's outbound passthrough or the SSH client (e.g. Termius) drops 24-bit sequences but happily forwards 256-color ones (`ESC[38;5;Nm`). Result: every color claude emits gets zeroed, the UI degenerates to a single shade. Zellij's own widgets stay colored because they use the ANSI-16 base palette.
+chalk (under Ink, under claude's TUI) reads `COLORTERM=truecolor` and emits 24-bit escape sequences (`ESC[38;2;R;G;Bm`). SSH clients like Termius drop 24-bit sequences in their passthrough but happily forward 256-color ones (`ESC[38;5;Nm`). Result: every color claude emits gets zeroed, the UI degenerates to a single shade. Other widgets (zellij status bar, shell prompt, `ls --color`) stay colored because they use the ANSI-16 / 256-color palette and never advertise truecolor.
 
-The same env on `tmux-256color` (operator) does **not** trigger this, because tmux doesn't have `COLORTERM=truecolor` set by default — chalk falls back to 256-color emission, which passes through unchanged.
+Operator on `tmux-256color` does **not** trigger this — tmux doesn't have `COLORTERM=truecolor` set by default, so chalk falls back to 256-color emission and passes through unchanged.
 
 ### Fix
-Pin chalk to 256-color emission inside the zellij pane by unsetting `COLORTERM` and forcing `FORCE_COLOR=2`. In your zellij layout (e.g. `~/.config/zellij/layouts/sysadmin.kdl`):
+Pin chalk to 256-color emission by unsetting `COLORTERM` and forcing `FORCE_COLOR=2` in your shell rc — covers every claude invocation regardless of how it's launched (tmux, zellij, bare SSH).
 
-```kdl
-layout {
-    pane command="/bin/zsh" {
-        args "-lc" "export TERM=xterm-256color; unset COLORTERM; export FORCE_COLOR=2; exec /home/agent-os/.local/bin/claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-peers"
-        cwd "/opt/agent-os/claude/agents/sysadmin"
-    }
-    pane size=1 borderless=true {
-        plugin location="zellij:status-bar"
-    }
-}
+In `~/.zshrc` (and `~/.bashrc` if you use bash):
+```sh
+# Termius/SSH passthrough silently drops 24-bit color escapes. If COLORTERM=truecolor
+# is set, chalk (claude TUI / Ink) emits ESC[38;2;R;G;Bm and the user sees monochrome.
+# 256-color escapes (ESC[38;5;Nm) pass fine. So: don't advertise truecolor, force 256.
+unset COLORTERM
+export FORCE_COLOR=2
 ```
 
-After editing the layout, `zellij delete-session <name> --force` and start fresh — pane env is captured at server start and detach/attach won't pick up changes.
+Then open a **new** shell (the current process keeps its env) and restart claude.
 
-Why this specific combo: the `export TERM=xterm-256color` survives `exec` so claude detects a 256-capable terminal; `unset COLORTERM` removes the truecolor advertisement; `FORCE_COLOR=2` tells chalk explicitly to emit at level 2 (256 colors) instead of probing and re-discovering truecolor through other heuristics.
+Why: `unset COLORTERM` removes the truecolor advertisement so chalk doesn't pick 24-bit; `FORCE_COLOR=2` tells chalk explicitly to emit at level 2 (256 colors) instead of re-discovering truecolor through other heuristics. Fewer total hues than truecolor, but they actually render — and at TUI distances the difference is invisible.
 
-Fewer total hues than truecolor, but they actually render — and at TUI distances the difference is invisible. If your outer terminal genuinely supports 24-bit (e.g. WezTerm, Alacritty, iTerm2 in truecolor mode) and you've verified passthrough end-to-end, you can skip this fix; the problem is specific to chains where 24-bit silently drops.
+If your outer terminal genuinely supports 24-bit (e.g. WezTerm, Alacritty, iTerm2 in truecolor over plain SSH) and you've verified passthrough end-to-end, you can keep `COLORTERM=truecolor` in those sessions; the problem is specific to chains where 24-bit silently drops.
+
+(Earlier versions of this entry pinned the fix to a zellij layout. It works there too, but the root cause is the SSH passthrough, not zellij — so shell rc is the right home for the fix.)
 
 ## Still broken?
 

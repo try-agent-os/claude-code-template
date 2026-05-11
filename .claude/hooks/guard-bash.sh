@@ -32,10 +32,20 @@ done
 
 # ---- Hard-block patterns ----
 
-# Recursive root/home deletes (defense in depth — managed-settings should also deny)
+# Recursive root/home/system-dir deletes (defense in depth — managed-settings should also deny).
+# Patterns are anchored, NOT substring-prefix, so legitimate deletes under
+# /home/<user>/..., /opt/..., /tmp/..., /data/... pass through. Use:
+#   - end-anchored `rm -rf /` (no trailing *) for bare root
+#   - explicit separator (space/;/&/|) after root for compound chains
+#   - literal `/*` glob (which would expand to all top-level entries)
+#   - exact system dirs as substrings (false positives like /etcetera are negligible)
 case "$STRIPPED" in
-  *"rm -rf /"*|*"rm -rf /*"*|*"rm -rf ~"*|*"rm -rf \$HOME"*|*"rm -rf /etc"*|*"rm -rf /usr"*|*"rm -rf /var"*|*"rm -rf /boot"*)
-    block "Refused destructive root/home delete: '$CMD'."
+  *"rm -rf /"|*"rm -rf / "*|*"rm -rf /;"*|*"rm -rf /&"*|*"rm -rf /|"*|*"rm -rf /*"*|\
+  *"rm -rf ~"|*"rm -rf ~ "*|*"rm -rf ~;"*|*"rm -rf \$HOME"*|*"rm -rf \"\$HOME\""*|\
+  *"rm -rf /etc"*|*"rm -rf /usr"*|*"rm -rf /var"*|*"rm -rf /boot"*|\
+  *"rm -rf /bin"*|*"rm -rf /sbin"*|*"rm -rf /lib"*|*"rm -rf /lib64"*|\
+  *"rm -rf /root"*|*"rm -rf /sys"*|*"rm -rf /proc"*|*"rm -rf /dev"*)
+    block "Refused destructive root/home/system delete: '$CMD'."
     ;;
 esac
 
