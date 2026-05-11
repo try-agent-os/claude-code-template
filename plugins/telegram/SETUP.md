@@ -38,11 +38,11 @@ whisper.cpp is built automatically on the first transcription call. To pre-build
 
 ```bash
 cd node_modules/nodejs-whisper/cpp/whisper.cpp
-cmake -B build
+cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
 cmake --build build -j --config Release
 ```
 
-On Apple Silicon this builds with Metal (GPU) + BLAS (Accelerate framework) automatically.
+On Apple Silicon this builds with Metal (GPU) + BLAS (Accelerate framework) automatically — the `-DGGML_BLAS_VENDOR=OpenBLAS` flag is a no-op when OpenBLAS isn't present and Accelerate is preferred. On Linux you need `apt install libopenblas-dev pkg-config` first for the flag to take effect; without it the encoder runs ~1.7x slower on CPU-only droplets.
 
 ## Environment
 
@@ -51,7 +51,23 @@ Create `.env`:
 ```
 TELEGRAM_BOT_TOKEN=<your bot token>
 PORT=3848
+# Optional — switch transcription to a long-running whisper-server
+# (model resident in RAM, saves ~1-3s model-load on every call).
+# WHISPER_SERVER_URL=http://127.0.0.1:8088
+# WHISPER_MODEL=small      # tiny | small | medium | large
 ```
+
+### Optional: whisper-server mode
+
+When `WHISPER_SERVER_URL` is set, voice/URL transcription POSTs the audio to that endpoint instead of spawning `whisper-cli` per call. Run the server (any host):
+
+```bash
+node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-server \
+  -m node_modules/nodejs-whisper/cpp/whisper.cpp/models/ggml-small.bin \
+  --host 127.0.0.1 --port 8088 --convert -t 4 -bs 5 -nt -l auto
+```
+
+On Linux installs this runs as `agent-os-whisper-server.service` (systemd unit in `systemd/agent-os-whisper-server.service`, wired by install.sh). On Mac it's typically NOT needed — Metal in `nodejs-whisper` per-call mode is fast enough that the server's footprint isn't worth it.
 
 ## Run
 

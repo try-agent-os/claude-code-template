@@ -29,13 +29,17 @@ src/
 
 ## Environment Variables
 - `TELEGRAM_BOT_TOKEN` — bot token (required)
+- `WHISPER_MODEL` — `tiny | small | medium | large`. Default `small`. Determines which `ggml-<name>.bin` is loaded.
+- `WHISPER_SERVER_URL` — optional. When set, transcription POSTs to that whisper-server `/inference` endpoint instead of spawning whisper-cli per call. Default on Linux installs (`http://127.0.0.1:8088`); unset on Mac (Metal is fast enough per-call).
 
 ## Setup prerequisites
 
 See `SETUP.md` for full instructions. Key things to keep in mind when making changes or deploying:
 
-- **System deps**: `cmake`, `ffmpeg` must be installed (not npm deps). Missing cmake → whisper.cpp won't build → voice transcription silently fails.
-- **Whisper model**: `ggml-medium.bin` (~1.5GB) must be downloaded into `node_modules/nodejs-whisper/cpp/whisper.cpp/models/`. Not in git, not auto-downloaded in non-TTY. See SETUP.md for the command.
-- **whisper.cpp build**: happens on first `transcribeVoice()` call (~30s cold). To avoid a cold first voice message, pre-build after install.
-- **Transcription flow**: voice → `/tmp/telegram-mcp/voice_X.ogg` → nodejs-whisper converts to WAV → whisper-cli transcribes → timestamps stripped by `parseWhisperOutput()` in `bot.ts`.
-- **Performance**: ~1.3x realtime on Apple Silicon with Metal. Longer voice messages take proportionally longer — user waits synchronously.
+- **System deps**: `cmake`, `ffmpeg`, `pkg-config`, `libopenblas-dev` (Linux) must be installed (not npm deps). Missing cmake → whisper.cpp won't build → voice transcription silently fails. Missing libopenblas-dev → encoder is ~1.7x slower on CPU-only droplets.
+- **Whisper model**: `ggml-<WHISPER_MODEL>.bin` must be downloaded into `node_modules/nodejs-whisper/cpp/whisper.cpp/models/`. Not in git, not auto-downloaded in non-TTY. See SETUP.md for the command. small = 244MB (sweet spot for CPU + Russian voice); medium = 1.5GB.
+- **whisper.cpp build**: happens on first `transcribeVoice()` call (~30s cold). install.sh pre-builds with `-DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS`.
+- **Transcription paths** (in `src/media-pipeline.ts`):
+  - `transcribeViaServer()` — when `WHISPER_SERVER_URL` is set. POSTs audio (multipart, `file` field, `language=auto`, `response_format=text`) via `fs.openAsBlob()` + `fetch()`. Model resident in RAM in the server process.
+  - `transcribeViaCli()` — fallback. Spawns `whisper-cli` per call via `nodejs-whisper`, parses `[hh:mm:ss --> ...]` timestamps out via `parseWhisperOutput()`.
+- **Performance**: Mac (Metal, per-call CLI): ~1.3x realtime. Linux 4 vCPU droplet (small + OpenBLAS + whisper-server): ~2-4x realtime, ~16s for a 7.4-sec clip. Longer messages take proportionally longer — user waits synchronously.

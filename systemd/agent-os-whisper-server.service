@@ -1,0 +1,37 @@
+[Unit]
+Description=AgentOS whisper-server (persistent whisper.cpp HTTP /inference endpoint)
+Documentation=https://github.com/try-agent-os/claude-code-template
+# Holds the ggml model resident in RAM so telegram-mcp transcription calls
+# don't pay the ~1-3s model-load on every voice/URL. Lives on 127.0.0.1:8088,
+# consumed by telegram-mcp via WHISPER_SERVER_URL.
+After=network.target
+
+[Service]
+Type=simple
+User={AGENT_USER}
+Group={AGENT_USER}
+# cwd must be writable: --convert makes ffmpeg drop a temp WAV next to the
+# upload. /tmp under PrivateTmp=yes is an isolated tmpfs, perfect for this.
+WorkingDirectory=/tmp
+EnvironmentFile={ENV_FILE}
+# WHISPER_MODEL comes from agent-os.env; defaults to "small" if unset.
+# `$${VAR}` escapes systemd's expander so sh receives a literal `${VAR}` and
+# can apply bash-style `:-default` fallback. systemd itself only supports
+# `${VAR}` (no defaults), so doing it in sh keeps the unit standalone.
+ExecStart=/bin/sh -c 'MODEL=$${WHISPER_MODEL:-small}; exec {INSTALL_ROOT}/claude/plugins/telegram/node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-server -m {INSTALL_ROOT}/claude/plugins/telegram/node_modules/nodejs-whisper/cpp/whisper.cpp/models/ggml-$${MODEL}.bin --host 127.0.0.1 --port 8088 --convert -t 4 -bs 5 -nt -l auto'
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# Needs read access to model + binary; --convert writes temp WAVs via ffmpeg.
+ReadWritePaths={STATE_DIR} {LOG_DIR}
+
+StandardOutput=append:{LOG_DIR}/whisper-server.log
+StandardError=append:{LOG_DIR}/whisper-server-errors.log
+
+[Install]
+WantedBy=multi-user.target

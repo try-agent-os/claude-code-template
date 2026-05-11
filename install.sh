@@ -122,11 +122,13 @@ TEMPLATE_REPO="https://github.com/try-agent-os/claude-code-template"
 readonly SAGA_MCP_REPO="https://github.com/try-agent-os/saga-mcp"
 
 # Defaults
-# WHISPER_MODEL: respects env var, defaults to "tiny" (75MB, fast).
-# Bumping the default to medium added ~3min to install on s-2vcpu-4gb droplets
-# for users who never use voice transcription. tiny is the right starting
-# point; users who want better can re-run with WHISPER_MODEL=medium.
-WHISPER_MODEL="${WHISPER_MODEL:-tiny}"
+# WHISPER_MODEL: respects env var, defaults to "small" (244MB).
+# small + OpenBLAS on CPU-only droplets runs ~2.7x realtime on Russian voice
+# with quality close to medium. tiny is faster but loses accuracy on accents
+# and technical vocabulary; medium adds ~3min to install and runs ~6x realtime
+# on a 4 vCPU host even with BLAS. Re-run with WHISPER_MODEL=tiny|medium to
+# override.
+WHISPER_MODEL="${WHISPER_MODEL:-small}"
 DISPATCHER_INTERVAL_SEC="2700"   # 45 min
 WITH_PLUGINS=""
 MINIMAL=0
@@ -1512,7 +1514,7 @@ if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
   TG_ADMIN_USER_IDS="${TG_ADMIN_USER_IDS:-$(state_get "tg_admin_user_ids" "")}"
   TG_ADMIN_USERNAMES="${TG_ADMIN_USERNAMES:-$(state_get "tg_admin_usernames" "")}"
   GIT_REMOTE="${GIT_REMOTE:-$(state_get "git_remote" "")}"
-  WHISPER_MODEL="${WHISPER_MODEL:-$(state_get "whisper_model" "tiny")}"
+  WHISPER_MODEL="${WHISPER_MODEL:-$(state_get "whisper_model" "small")}"
   # Secrets stay in env (already sourced from $ENV_FILE above)
   TG_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-${TG_BOT_TOKEN:-}}"
 else
@@ -1534,11 +1536,11 @@ else
       TG_ADMIN_USER_IDS="$TG_USER_ID"  # legacy single-admin → seed allowlist
     fi
     GIT_REMOTE="${GIT_REMOTE:-$(state_get git_remote "")}"
-    # WHISPER_MODEL: env var > state > "tiny" (lightest default).
+    # WHISPER_MODEL: env var > state > "small" (CPU sweet spot).
     # The env var must win unconditionally so non-interactive callers (Mac
     # wizard / cloud-init) can override; previously this fell through to state
-    # too eagerly and clobbered WHISPER_MODEL=tiny passed via SSH.
-    WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model tiny)}"
+    # too eagerly and clobbered the passed value.
+    WHISPER_MODEL="${WHISPER_MODEL:-$(state_get whisper_model small)}"
     # Persist non-secret answers to state
     state_set project_name "$PROJECT_NAME"
     state_set timezone "$TIMEZONE"
@@ -1716,6 +1718,7 @@ rm -f "$_apt_log"
 apt-get install -y --no-install-recommends \
   curl ca-certificates gnupg git tmux jq sqlite3 \
   build-essential cmake ffmpeg \
+  libopenblas-dev pkg-config \
   python3 python3-pip \
   ufw \
   bubblewrap socat \
@@ -1947,9 +1950,13 @@ if [[ -d \$WMODELS ]]; then
   if [[ ! -f "\$WMODELS/ggml-${WHISPER_MODEL}.bin" ]]; then
     ( cd "\$WMODELS" && bash download-ggml-model.sh "${WHISPER_MODEL}" )
   fi
-  if [[ ! -x "\$WBUILD/bin/whisper-cli" ]]; then
+  if [[ ! -x "\$WBUILD/bin/whisper-cli" ]] || [[ ! -x "\$WBUILD/bin/whisper-server" ]]; then
+    # On Linux: pin to OpenBLAS for ~1.7x encoder speedup on CPU-only hosts.
+    # On macOS: cmake auto-detects Metal + Accelerate, BLAS flag is harmless no-op.
     ( cd node_modules/nodejs-whisper/cpp/whisper.cpp \
-        && cmake -B build && cmake --build build -j --config Release )
+        && rm -rf build \
+        && cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DCMAKE_BUILD_TYPE=Release \
+        && cmake --build build -j --config Release )
   fi
 fi
 EOF
@@ -1996,6 +2003,7 @@ render_unit() {
 
 for unit in agent-os-saga.service \
             agent-os-telegram-mcp.service \
+            agent-os-whisper-server.service \
             agent-os-dispatcher.service \
             agent-os-dispatcher.timer \
             agent-os-operator.service \
@@ -2054,6 +2062,13 @@ umask 077
   echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
   echo "TZ=${TIMEZONE}"
   echo "PROJECT_NAME=${PROJECT_NAME}"
+  echo
+  echo "# --- Whisper ---"
+  echo "WHISPER_MODEL=${WHISPER_MODEL}"
+  # WHISPER_SERVER_URL routes telegram-mcp transcription via the persistent
+  # whisper-server unit (model resident in RAM) instead of spawning whisper-cli
+  # per call. Saves the ~1-3s model-load on every voice/URL.
+  echo "WHISPER_SERVER_URL=http://127.0.0.1:8088"
   echo
   echo "# --- Behaviour ---"
   echo "DISABLE_AUTOUPDATER=1"
@@ -2254,6 +2269,14 @@ step "17/18 enable + start units"
 UNITS=(agent-os-saga.service agent-os-telegram-mcp.service agent-os-dispatcher.timer)
 if [[ "${MINIMAL}" == 0 ]]; then
   UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+  # whisper-server only when telegram plugin is installed (binary + model
+  # live inside its node_modules). Skip under --minimal.
+  if [[ -x "${INSTALL_ROOT}/claude/plugins/telegram/node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-server" ]] \
+     && [[ -f "${INSTALL_ROOT}/claude/plugins/telegram/node_modules/nodejs-whisper/cpp/whisper.cpp/models/ggml-${WHISPER_MODEL}.bin" ]]; then
+    UNITS+=(agent-os-whisper-server.service)
+  else
+    warn "  whisper-server binary or model missing — skipping unit enable"
+  fi
 fi
 
 systemctl enable --now "${UNITS[@]}"
