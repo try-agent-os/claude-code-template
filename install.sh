@@ -2138,6 +2138,29 @@ render_user_settings_json "$CC_DIR_OPERATOR"
 render_user_settings_json "$CC_DIR_DISPATCHER"
 render_user_settings_json "$CC_DIR_HEARTBEAT"
 log "  per-agent ~/.claude.json + settings.json rendered for operator/dispatcher/heartbeat"
+
+# $AGENT_HOME/.claude/settings.json — DEFAULT user-scope config dir for manual
+# sessions (sysadmin tmux, ad-hoc `claude` invocations without CLAUDE_CONFIG_DIR
+# override). Register the agentos marketplace here so claude can resolve
+# plugins enabled in managed-settings.json (claude-peers, telegram, ...).
+# Without this, manual sessions hit:
+#   "server:claude-peers · no MCP server configured with that name"
+# because the per-agent dirs above get the marketplace but the default doesn't.
+# jq-merge preserves user-managed fields (theme, skipDangerousModePermissionPrompt, ...).
+DEFAULT_CC_DIR="${AGENT_HOME}/.claude"
+DEFAULT_SETTINGS="${DEFAULT_CC_DIR}/settings.json"
+install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0755 "$DEFAULT_CC_DIR"
+[[ -f "$DEFAULT_SETTINGS" ]] || echo '{}' > "$DEFAULT_SETTINGS"
+SETTINGS_TMP=$(mktemp)
+jq --arg root "${INSTALL_ROOT}/claude" '
+  .extraKnownMarketplaces.agentos = {
+    "source": { "source": "directory", "path": $root }
+  }
+' "$DEFAULT_SETTINGS" > "$SETTINGS_TMP" && mv "$SETTINGS_TMP" "$DEFAULT_SETTINGS"
+chown "$AGENT_USER:$AGENT_USER" "$DEFAULT_SETTINGS"
+chmod 0640 "$DEFAULT_SETTINGS"
+log "  agentos marketplace merged into ${DEFAULT_SETTINGS} (manual sessions)"
+
 mark_step_completed 12
 
 ###############################################################################
