@@ -13,7 +13,7 @@ Cron job (installed from `start.sh` or by hand):
 
 1. Increment `heartbeat_count` in `memory/context.md`
 2. Collect worker results (`worker-collector.sh`)
-3. Route new tasks from `memory/queue.md` → launch workers
+3. Route new tasks from saga-mcp (`mcp__saga-mcp__task_list`) → launch workers
 4. Check schedule (`memory/schedule.md`)
 5. Watchdog (stuck workers, lost tasks)
 6. Strategist (every 10 cycles, Opus)

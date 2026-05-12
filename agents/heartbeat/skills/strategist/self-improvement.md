@@ -27,8 +27,8 @@ Pattern used successfully (task done, result confirmed) → confidence += 0.05
 ### Promotion
 
 Conditions: confidence >= 0.9 AND used >= 5 times
-- Create a task in memory/queue.md: "Add pattern X to the CLAUDE.md of agent Y"
-- Priority: LOW
+- Create a saga task via `mcp__saga-mcp__task_create`: "Add pattern X to the CLAUDE.md of agent Y"
+- Priority: low
 - Requires user confirmation (changing CLAUDE.md = architectural decision)
 
 ### Archival

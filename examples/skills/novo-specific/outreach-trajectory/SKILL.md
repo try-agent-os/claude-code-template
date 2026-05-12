@@ -182,7 +182,7 @@ git push
 
 - Если Mobile Prospects sheet недоступен → работать только с данными из draft файла
 - Если Funnel sheet недоступен → записать касания только в draft файл (таблица вручную)
-- Если saga-mcp недоступен → записать напоминалки в `memory/queue.md`
+- Если saga-mcp недоступен → залогировать напоминалки в `logs/workers/<task>/result.md` (отметить как blocked: saga-mcp unreachable, пользователь восстановит после возврата сервиса)
 
 ## Smoke Test Criteria
 

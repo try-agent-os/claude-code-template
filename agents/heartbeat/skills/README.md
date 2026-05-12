@@ -35,7 +35,7 @@ Agent(
 | health-watchdog | [strategist/health-watchdog.md](strategist/health-watchdog.md) | **First in every strategist cycle** — system health check |
 | signal-analysis | [strategist/signal-analysis.md](strategist/signal-analysis.md) | New signals accumulated in signals.md; need conversion to tasks |
 | business-analysis | [strategist/business-analysis.md](strategist/business-analysis.md) | Analyze data through lenses (configurable via `memory/lenses.yaml`) to find concrete opportunities |
-| blocker-resolution | [strategist/blocker-resolution.md](strategist/blocker-resolution.md) | Blocked tasks in queue.md or saga-mcp |
+| blocker-resolution | [strategist/blocker-resolution.md](strategist/blocker-resolution.md) | Blocked tasks in saga-mcp |
 | self-improvement | [strategist/self-improvement.md](strategist/self-improvement.md) | Regular cycle — pattern confidence updates and performance review |
 | worker-results-analysis | [strategist/worker-results-analysis.md](strategist/worker-results-analysis.md) | heartbeat_count % 5 == 0 (every 5 strategist cycles) |
 

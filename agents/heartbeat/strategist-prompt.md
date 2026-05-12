@@ -45,7 +45,7 @@ Read all memory files:
 - `memory/performance.md` — task trajectory
 - `memory/learnings.md` — insights and lessons
 - `memory/people.md` — contact index
-- `memory/queue.md` — task queue
+- saga-mcp task queue — `mcp__saga-mcp__task_list()` (open tasks) + `mcp__saga-mcp__task_list(status: "blocked")` (blockers)
 
 ### Step 2: Signal analysis
 
@@ -58,7 +58,7 @@ Read `agents/heartbeat/skills/strategist/signal-analysis.md`, then:
 ### Step 3: Blocker resolution
 
 Read `agents/heartbeat/skills/strategist/blocker-resolution.md`, then:
-- Find blocked tasks in memory/queue.md
+- Find blocked tasks via `mcp__saga-mcp__task_list(status: "blocked")`
 - Try to unblock each
 - Phrase concrete asks if the user's help is needed
 - Check aging of blocked tasks
@@ -75,7 +75,7 @@ The lens list is configurable. If `memory/lenses.yaml` exists — use the lenses
 4. **performance** — how the system is delivering
 5. **system-health** — health of agents, infra, and data
 
-For each lens: phrase concrete proposals with actions. Create tasks in memory/queue.md for the strongest ideas.
+For each lens: phrase concrete proposals with actions. Create saga tasks via `mcp__saga-mcp__task_create` for the strongest ideas.
 
 ### Step 5: Worker Results Analysis (Reflexion)
 
@@ -99,7 +99,7 @@ Read `agents/heartbeat/skills/strategist/self-improvement.md`, then:
 
 ### Step 7: Result
 
-1. Write new tasks into `memory/queue.md` (newest at the top)
+1. Create new tasks in saga-mcp via `mcp__saga-mcp__task_create` (tags: `["source:strategist"]`)
 2. Update memory files that changed (signals, opportunities, patterns, performance)
 3. Git commit + push all changes
 4. Write the summary into `{{RESULT_FILE}}`

@@ -91,4 +91,4 @@ Align analysis with current priorities from context.md:
 - If focus is on product → spend more time on product/content-style lenses
 - If focus is on growth → spend more time on network/content-style lenses
 
-Create tasks in memory/queue.md only for ideas with a concrete next step.
+Create saga tasks via `mcp__saga-mcp__task_create` only for ideas with a concrete next step.

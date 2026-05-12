@@ -1,7 +1,7 @@
 ---
 name: strategist-blocker-resolution
 description: Протокол работы с blocked-задачами — сначала попытка самостоятельного обхода блокера, затем точный минимальный запрос пользователю, затем aging-анализ после 24ч.
-when_to_use: Есть задачи со статусом blocked в queue.md или saga-mcp; нужно снять блокер или сформулировать запрос к пользователю.
+when_to_use: Есть задачи со статусом blocked в saga-mcp; нужно снять блокер или сформулировать запрос к пользователю.
 allowed-tools: Read, Edit, Bash, mcp__saga-mcp__task_get, mcp__saga-mcp__task_list, mcp__saga-mcp__task_update
 ---
 

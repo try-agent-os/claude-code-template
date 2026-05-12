@@ -1,12 +1,12 @@
 ---
 title: Blocker Resolution
 summary: Protocol for working with blocked tasks — first attempt to unblock yourself, then formulate a precise minimal request to the user, then aging analysis after 24h.
-read_when: Tasks are in blocked status in queue.md or saga-mcp; need to unblock or formulate a request to the user.
+read_when: Tasks are in blocked status in saga-mcp; need to unblock or formulate a request to the user.
 ---
 
 # Skill: Blocker Resolution
 
-Protocol for working with blocked tasks in `memory/queue.md`.
+Protocol for working with blocked tasks in saga-mcp (`mcp__saga-mcp__task_list(status: "blocked")`).
 
 ## Step 1: Unblock yourself
 
@@ -37,7 +37,7 @@ Principles:
 - Link to where to create/find the thing
 - Expected format/result
 
-Request → task in memory/queue.md with priority MED, type: `awaiting_user`.
+Request → saga task via `mcp__saga-mcp__task_create` with priority `medium`, tags: `["awaiting_user"]`.
 
 ## Step 3: Aging
 

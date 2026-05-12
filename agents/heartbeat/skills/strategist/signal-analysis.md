@@ -34,7 +34,7 @@ Related signals → pattern:
 
 ## Conversion to tasks
 
-Signals with cumulative score >= 3 (or one high) → create a task in `memory/queue.md`:
+Signals with cumulative score >= 3 (or one high) → create a saga task via `mcp__saga-mcp__task_create`:
 
 - Scope: concrete, numbered steps
 - Acceptance criteria: how to know it's done
@@ -59,7 +59,7 @@ Numbering: find the last OPP-NNN, increment by +1.
 
 - Opportunity active > 72h with no movement → decision:
   - New data appeared → update next step
-  - No new data, still relevant → escalate (task in memory/queue.md)
+  - No new data, still relevant → escalate (saga task via `mcp__saga-mcp__task_create`)
   - No longer relevant → dismiss with reason
 
 ## HIGH-trigger
@@ -76,7 +76,7 @@ If the signal is VERIFIED (confirmed by at least one additional source):
 → create opportunity + HIGH task immediately
 
 If the signal is SOLO (one source only, no cross-confirmation):
-→ create a [MED] task "Verify signal: {name}" in queue.md
+→ create a saga task via `mcp__saga-mcp__task_create` (priority `medium`, title `"Verify signal: {name}"`)
 → log it in signals.md tagged "unverified, source: {source}"
 → Do NOT create an opportunity, do NOT alert the user
 
