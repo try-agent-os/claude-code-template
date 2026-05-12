@@ -5,13 +5,11 @@
   "minimumVersion": "2.1.119",
 
   "allowedChannelPlugins": [
-    {"plugin": "claude-peers", "marketplace": "agentos"},
-    {"plugin": "telegram", "marketplace": "agentos"}
+    {"plugin": "claude-peers", "marketplace": "agentos"}
   ],
 
   "enabledPlugins": {
     "claude-peers@agentos": true,
-    "telegram@agentos": true,
     "agentos-core@agentos": true,
     "template-dev@agentos": true,
     "agent-sdk-dev@agentos": true,
