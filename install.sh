@@ -25,7 +25,7 @@
 #   --with=feature-dev,frontend-design  Comma-separated optional plugins to vendor
 #   --non-interactive               Read all wizard answers from preset env vars (CI/automation)
 #   --bootstrap-personal-repo URL   Replace template remote with user's own GitHub fork
-#   --whisper=tiny|base|medium      Whisper model size (default tiny=75MB; medium=1.5GB)
+#   --whisper=tiny|base|small|medium Whisper model size (default small=244MB; medium=1.5GB)
 #   --harden                        Apply egress firewall (deny by default, allow only api.anthropic.com,
 #                                   GitHub, apt repos). Off by default — heavy.
 #   --skip-build                    Skip MCP build steps (assume artefacts exist; for re-runs)
@@ -465,8 +465,8 @@ for arg in "$@"; do
 done
 
 case "$WHISPER_MODEL" in
-  tiny|base|medium) ;;
-  *) fail "--whisper must be one of: tiny | base | medium" ;;
+  tiny|base|small|medium) ;;
+  *) fail "--whisper must be one of: tiny | base | small | medium" ;;
 esac
 
 ###############################################################################
@@ -1010,7 +1010,7 @@ exec_remote_setup_wizard() {
   PROJECT_NAME=$(ask "Project slug" "project_name" "myagentos")
   GIT_REMOTE=$(ask "Git remote (optional, blank to skip)" "git_remote" "")
   TIMEZONE=$(ask "Timezone (IANA)" "timezone" "Europe/Lisbon")
-  WHISPER_MODEL=$(ask "Whisper model (tiny|base|medium)" "whisper_model" "$WHISPER_MODEL")
+  WHISPER_MODEL=$(ask "Whisper model (tiny|base|small|medium)" "whisper_model" "$WHISPER_MODEL")
 
   ###########################################################################
   # Step 4 — Telegram bot setup (BotFather hand-holding)
@@ -2210,12 +2210,13 @@ if [[ -f "$MS_TPL" ]]; then
     # Strip telegram@agentos from enabledPlugins + allowedChannelPlugins,
     # and drop mcp__telegram__* permission. Result is a saga + claude-peers
     # only managed-settings.json — no telegram references at all.
-    # NOTE: enabledPlugins / allowedChannelPlugins are OBJECTS (records)
-    # in claude-code 2.1.119+ schema, not arrays — use `del(.[name])`.
+    # NOTE: enabledPlugins is an OBJECT (record) — use `del(.[name])`.
+    # allowedChannelPlugins is an ARRAY of {plugin, marketplace} objects —
+    # use array filter, not object-key delete.
     jq '
       .enabledPlugins         |= del(.["telegram@agentos"])
-      | .allowedChannelPlugins  |= del(.["telegram@agentos"])
-      | .permissions.allow      |= map(select(. != "mcp__telegram__*"))
+      | .allowedChannelPlugins  |= [.[] | select(.plugin != "telegram")]
+      | if .permissions.allow then .permissions.allow |= map(select(. != "mcp__telegram__*")) else . end
     ' "$MS_TPL" > "$CLAUDE_MANAGED_FILE"
     chown root:root "$CLAUDE_MANAGED_FILE"
     chmod 0644 "$CLAUDE_MANAGED_FILE"
