@@ -1867,6 +1867,42 @@ install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "${AGENT_HOME}/.config"
 # because ProtectHome=read-only would block it.
 install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 "${AGENT_HOME}/.tmux"
 
+# Unified TMUX_TMPDIR for the ${AGENT_USER} user. Four layers because each
+# covers a different invocation path:
+#   1. agent-os-operator.service — Environment=TMUX_TMPDIR=... in the unit
+#   2. interactive shells (~/.bashrc) — export in ${AGENT_HOME}/.bashrc
+#   3. login shells (/etc/profile.d/) — for `ssh ${AGENT_USER}@host` & `sudo -i`
+#   4. non-interactive sudo (/etc/sudoers.d/) — env_keep so the caller's value
+#      is preserved through `sudo -u ${AGENT_USER} <cmd>`
+# Worker/launcher scripts also export TMUX_TMPDIR= at the top for the
+# cron/heartbeat codepath where none of (1-4) apply.
+# Without this, tmux falls back to /tmp/tmux-{uid}/default and that socket
+# is invisible to the operator unit (PrivateTmp=yes isolates /tmp anyway).
+PROFILE_TMUX="/etc/profile.d/agent-os-tmux.sh"
+cat > "$PROFILE_TMUX" <<EOF
+# AgentOS: shared tmux server location for the ${AGENT_USER} user.
+# Loaded on login shells. Matches agent-os-operator.service Environment=
+# and ${AGENT_HOME}/.bashrc export. Non-interactive sudo is handled by
+# /etc/sudoers.d/${AGENT_USER}-tmux (env_keep += TMUX_TMPDIR).
+if [ "\$(id -un 2>/dev/null)" = "${AGENT_USER}" ]; then
+  export TMUX_TMPDIR="${AGENT_HOME}/.tmux"
+fi
+EOF
+chmod 0644 "$PROFILE_TMUX"
+
+SUDOERS_TMUX="/etc/sudoers.d/${AGENT_USER}-tmux"
+cat > "$SUDOERS_TMUX" <<EOF
+# Preserve TMUX_TMPDIR through \`sudo -u ${AGENT_USER} <cmd>\` so the
+# caller's tmux socket choice survives. Without env_keep, sudo strips it
+# and tmux defaults to /tmp/tmux-{uid}/default — a different server.
+Defaults env_keep += "TMUX_TMPDIR"
+EOF
+chmod 0440 "$SUDOERS_TMUX"
+if ! visudo -c -f "$SUDOERS_TMUX" >/dev/null 2>&1; then
+  rm -f "$SUDOERS_TMUX"
+  fail "sudoers syntax check failed — ${SUDOERS_TMUX} removed"
+fi
+
 # Now that ETC_DIR is owned root:agent-os, fix state file ownership if it pre-existed
 if [ -f "$STATE_FILE" ]; then
   chown root:"$AGENT_USER" "$STATE_FILE" 2>/dev/null || true

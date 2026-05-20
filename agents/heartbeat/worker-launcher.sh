@@ -13,6 +13,13 @@
 
 set -euo pipefail
 
+# Shared tmux server across all agent-os entry points: operator unit, bridge,
+# interactive sysadmin, watchdog. Without this, when heartbeat runs this
+# script under systemd/cron where TMUX_TMPDIR is unset, tmux defaults to
+# /tmp/tmux-{uid}/default and the worker session lands on a separate server
+# invisible to operator pane lookups.
+export TMUX_TMPDIR="${TMUX_TMPDIR:-$HOME/.tmux}"
+
 TASK_ID="${1:?Usage: $0 <task-id> <prompt-file> [max-iterations] [timeout-minutes] [agent-type] [model]}"
 PROMPT_FILE="${2:?Usage: $0 <task-id> <prompt-file> [max-iterations] [timeout-minutes] [agent-type] [model]}"
 MAX_ITERATIONS="${3:-20}"

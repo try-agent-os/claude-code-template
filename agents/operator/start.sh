@@ -21,6 +21,14 @@ INSTALL_ROOT="${INSTALL_ROOT:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
 PROJECT_SLUG="${PROJECT_SLUG:-agent-os}"
 SESSION="operator"
 
+# Shared tmux server (matches agent-os-operator.service Environment=TMUX_TMPDIR
+# on linux and the user's interactive shell via ~/.bashrc on both platforms).
+# Without this, manual invocations land tmux on /tmp/tmux-{uid}/default and the
+# operator session becomes invisible to bridge / watchdog scripts which expect
+# $HOME/.tmux/tmux-{uid}/default.
+export TMUX_TMPDIR="${TMUX_TMPDIR:-$HOME/.tmux}"
+mkdir -p "$TMUX_TMPDIR"
+
 PLATFORM="$(uname -s)"
 
 is_linux_systemd() {

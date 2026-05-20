@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+# Shared tmux server (see worker-launcher.sh for rationale).
+export TMUX_TMPDIR="${TMUX_TMPDIR:-$HOME/.tmux}"
+
 HOME="${HOME}"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
