@@ -14,6 +14,9 @@ WorkingDirectory={INSTALL_ROOT}/claude/plugins/telegram
 EnvironmentFile={ENV_FILE}
 Environment=PORT=3848
 Environment=NODE_ENV=production
+# LOGIN_OPERATOR_SOCKET — operator runs in a named tmux socket; tell login-flow
+# where to look so it doesn't spuriously restart operator on every /login.
+Environment=LOGIN_OPERATOR_SOCKET=/home/{AGENT_USER}/.tmux/operator.sock
 ExecStart=/usr/bin/node {INSTALL_ROOT}/claude/plugins/telegram/dist/index.js
 Restart=always
 RestartSec=5
