@@ -1933,6 +1933,30 @@ if [ -f "$STATE_FILE" ]; then
   chown root:"$AGENT_USER" "$STATE_FILE" 2>/dev/null || true
   chmod 0640 "$STATE_FILE" 2>/dev/null || true
 fi
+
+# claude migrate-installer (run as agent-os, now that the user exists).
+# The apt package ships claude at /usr/bin/claude (system-wide), but downstream
+# steps (12 mcp registration, systemd operator unit) expect
+# ${AGENT_HOME}/.local/bin/claude for two reasons:
+#   1. per-user auto-update channel doesn't touch /usr/bin (rootless update)
+#   2. the operator unit's PATH already includes ${AGENT_HOME}/.local/bin
+# Migrate is idempotent — installs into ~/.local/{bin,share}/claude and rewires
+# the canonical entrypoint. We run it once here so step 12 finds the binary
+# (was failing with "sudo: /home/agent-os/.local/bin/claude: command not found"
+# on fresh droplets where claude was only installed via apt).
+if command -v claude >/dev/null 2>&1; then
+  if [[ ! -x "${AGENT_HOME}/.local/bin/claude" ]]; then
+    log "  running 'claude migrate-installer' for ${AGENT_USER}"
+    sudo -u "$AGENT_USER" HOME="$AGENT_HOME" claude migrate-installer < /dev/null 2>&1 \
+      | sed 's/^/    /' || warn "  claude migrate-installer failed — step 12 may fail"
+    if [[ -x "${AGENT_HOME}/.local/bin/claude" ]]; then
+      log "  ${AGENT_HOME}/.local/bin/claude created"
+    fi
+  else
+    log "  ${AGENT_HOME}/.local/bin/claude already present"
+  fi
+fi
+
 mark_step_completed 6
 
 ###############################################################################
