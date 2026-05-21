@@ -1,6 +1,6 @@
 {
   "name": "telegram",
-  "version": "vendored-3f6171e",
+  "version": "vendored-d19e6e8-v0.1.2",
   "description": "Telegram bot interface via MTProto. Channel push for incoming messages, tools for replies and bot management.",
   "category": "agentos-core",
   "mcpServers": "./mcp.json",

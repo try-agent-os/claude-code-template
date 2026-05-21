@@ -50,11 +50,13 @@ Create `.env`:
 
 ```
 TELEGRAM_BOT_TOKEN=<your bot token>
+TELEGRAM_ADMIN_USER_IDS=<comma-separated admin IDs>
 PORT=3848
 # Optional — switch transcription to a long-running whisper-server
 # (model resident in RAM, saves ~1-3s model-load on every call).
 # WHISPER_SERVER_URL=http://127.0.0.1:8088
-# WHISPER_MODEL=small      # tiny | small | medium | large
+# WHISPER_MODEL=medium      # tiny | small | medium | large
+# TELEGRAM_MCP_MEDIA_DIR=/var/lib/telegram-mcp  # default /tmp/telegram-mcp
 ```
 
 ### Optional: whisper-server mode
@@ -67,7 +69,7 @@ node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-server \
   --host 127.0.0.1 --port 8088 --convert -t 4 -bs 5 -nt -l auto
 ```
 
-On Linux installs this runs as `agent-os-whisper-server.service` (systemd unit in `systemd/agent-os-whisper-server.service`, wired by install.sh). On Mac it's typically NOT needed — Metal in `nodejs-whisper` per-call mode is fast enough that the server's footprint isn't worth it.
+Recommended on CPU-only hosts (Linux droplets) where the per-call CLI cold start dominates latency. On Mac it's usually not worth it — Metal in `nodejs-whisper` per-call mode is fast enough that the server's footprint isn't justified.
 
 ## Run
 

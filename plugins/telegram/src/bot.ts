@@ -1,12 +1,19 @@
 import { Bot, Context } from 'grammy';
-import type { Message, MessageOrigin } from '@grammyjs/types';
+import type { Message, MessageEntity, MessageOrigin } from '@grammyjs/types';
 import { createWriteStream, mkdirSync } from 'fs';
 import https from 'https';
 import path from 'path';
 import { checkAccess, touchUser } from './access.js';
 import { createCommands } from './commands/index.js';
 import { getUser, saveMessage } from './db.js';
+import {
+  shouldNotifyAgent,
+  type BotIdentity,
+  type PolicyEntity,
+  type PolicyMessage,
+} from './group-policy.js';
 import { extractMediaUrl, processUrl, processVideo, transcribeVoice } from './media-pipeline.js';
+import { isLoginAdmin, isLoginPending, submitLogin } from './login-flow.js';
 import type { ChatType, IncomingMessageEvent, MediaType } from './types.js';
 
 export interface ReactionEvent {
@@ -19,7 +26,7 @@ export interface ReactionEvent {
   userId: number | null;
 }
 
-const MEDIA_DIR = '/tmp/telegram-mcp';
+const MEDIA_DIR = process.env.TELEGRAM_MCP_MEDIA_DIR ?? '/tmp/telegram-mcp';
 
 let messageCallback: ((event: IncomingMessageEvent) => void) | null = null;
 let reactionCallback: ((event: ReactionEvent) => void) | null = null;
@@ -109,6 +116,8 @@ export function createBot(token: string, options?: BotOptions): Bot {
     { command: 'timezone', description: 'Set or view timezone (e.g. /timezone America/New_York)' },
     { command: 'status', description: 'Check bot and Claude connection status' },
     { command: 'id', description: 'Show your Telegram user ID' },
+    { command: 'login', description: 'Re-authenticate Claude OAuth (admin only)' },
+    { command: 'login_cancel', description: 'Cancel a pending /login flow' },
     { command: 'help', description: 'List available commands' },
   ]).catch(err => console.error('[bot] Failed to set commands:', err));
 
@@ -119,6 +128,8 @@ export function createBot(token: string, options?: BotOptions): Bot {
     const userId = msg.from!.id;
     const chatId = msg.chat.id;
     const chatType = msg.chat.type as ChatType;
+    // Group/supergroup/channel chats expose `title`; private chats expose only
+    // first_name/last_name on the chat object (we already capture those via from.*).
     const chatTitle =
       chatType === 'private'
         ? null
@@ -127,13 +138,52 @@ export function createBot(token: string, options?: BotOptions): Bot {
     const displayName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || null;
     const isForward = !!msg.forward_origin;
     const forwardFrom = getForwardFrom(msg.forward_origin);
-    return { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom };
+    const isForum = !!(msg.chat as { is_forum?: boolean }).is_forum;
+    const messageThreadId = msg.message_thread_id ?? null;
+    return { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId };
+  }
+
+  // Adapter: turn a grammY/Bot-API Message into the framework-agnostic shape
+  // the group-policy module consumes. Centralised so every handler uses the
+  // same projection (text vs caption, entities vs caption_entities, etc.).
+  function toPolicyMessage(msg: Message): PolicyMessage {
+    const rawEntities = (msg.entities ?? msg.caption_entities ?? []) as MessageEntity[];
+    const entities: PolicyEntity[] = rawEntities.map(e => {
+      const base: PolicyEntity = { type: e.type, offset: e.offset, length: e.length };
+      // text_mention carries an embedded User; pull the id so we can match
+      // against THIS bot without relying on the surface username text.
+      if (e.type === 'text_mention') {
+        const u = (e as MessageEntity.TextMentionMessageEntity).user;
+        base.user = { id: u.id, username: u.username ?? null };
+      }
+      return base;
+    });
+    return {
+      text: msg.text ?? msg.caption ?? '',
+      entities,
+      replyToUserId: msg.reply_to_message?.from?.id ?? null,
+    };
+  }
+
+  function getBotIdentity(ctx: Context): BotIdentity | null {
+    // ctx.me is populated once bot.init() has run (grammY calls init inside
+    // bot.start()). Before that — or in pathological cases — bail out and let
+    // the caller fall back to "always notify" so we never silently drop
+    // private DMs because of a missing identity.
+    const me = ctx.me;
+    if (!me || !me.username) return null;
+    return { id: me.id, username: me.username };
   }
 
   // Gate per-user access ONLY in private chats. In groups/supergroups/channels
-  // the bot's mere presence (added by an admin) is implicit access — don't
-  // auto-create pending records or reply with denial messages (would spam the
-  // chat). An explicit pre-existing 'denied' record still blocks the user.
+  // the bot's mere presence (added by an admin) is treated as implicit access:
+  // - Don't auto-create new user records as 'pending' for every group member
+  //   who happens to send a message.
+  // - Never reply with "Access request submitted" or "Access denied" inside a
+  //   group — that would spam the chat. Just drop the message silently.
+  // - Do still respect an explicit 'denied' status if the user has one (set
+  //   manually via /deny in private earlier) to allow per-person blocks.
+  // Returns true if the handler should continue processing the message.
   async function gateAccess(ctx: Context, userId: number, chatType: ChatType): Promise<boolean> {
     if (chatType === 'private') {
       const access = checkAccess(userId);
@@ -144,12 +194,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       }
       return true;
     }
+    // Non-private: only block users with a pre-existing 'denied' record.
+    // Don't auto-create a record (that would mark every group member as pending
+    // and pollute the users table).
     const existing = getUser(userId);
     if (existing && existing.status === 'denied') return false;
     return true;
   }
 
-  function dispatchEvent(event: IncomingMessageEvent): void {
+  // Persist every incoming message to the local SQLite store; only forward to
+  // the agent (claude/channel notification) when `notify` is true. In group
+  // chats `notify` reflects whether the bot was explicitly addressed
+  // (mention / reply / slash command) — see shouldNotifyAgent. Storing
+  // un-notified messages preserves chat-history context for future agent
+  // invocations without spamming the live session.
+  function dispatchEvent(event: IncomingMessageEvent, notify: boolean = true): void {
     saveMessage({
       telegram_message_id: event.messageId,
       chat_id: event.chatId,
@@ -166,7 +225,7 @@ export function createBot(token: string, options?: BotOptions): Bot {
       file_name: event.fileName,
     });
 
-    if (messageCallback) messageCallback(event);
+    if (notify && messageCallback) messageCallback(event);
   }
 
   // Text messages with per-(chat,user) debounced batching.
@@ -187,6 +246,13 @@ export function createBot(token: string, options?: BotOptions): Bot {
     chatId: number;
     chatType: ChatType;
     chatTitle: string | null;
+    messageThreadId: number | null;
+    isForum: boolean;
+    // Per-message group-policy verdict. The batch as a whole notifies the
+    // agent if ANY of its parts was addressed to the bot (mention / reply /
+    // slash command). This handles the share+caption pattern where the
+    // caption mentions the bot but the link itself does not.
+    notify: boolean;
   }
 
   interface TextBatch {
@@ -203,6 +269,7 @@ export function createBot(token: string, options?: BotOptions): Bot {
 
     const combined = batch.messages.map(m => m.text).join('\n');
     const last = batch.messages[batch.messages.length - 1];
+    const notify = batch.messages.some(m => m.notify);
 
     let text = combined;
     const url = extractMediaUrl(combined);
@@ -228,16 +295,49 @@ export function createBot(token: string, options?: BotOptions): Bot {
       isForward: last.isForward,
       forwardFrom: last.forwardFrom,
       caption: null,
-    });
+      messageThreadId: last.messageThreadId,
+      isForum: last.isForum,
+    }, notify);
   }
 
   bot.on('message:text', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
+
+    // /login follow-up: if there's a pending OAuth flow for this chat and the
+    // user just sent free-form text (not another slash command), treat it as
+    // the verification code. Handled inline here, not as a command, because
+    // the code itself is opaque — we can't know what it'll look like. Must
+    // run BEFORE batching so a single code isn't combined with a stray
+    // follow-up text into one payload sent to the agent.
+    if (
+      chatType === 'private' &&
+      isLoginAdmin(userId) &&
+      isLoginPending(chatId) &&
+      !msg.text!.startsWith('/')
+    ) {
+      const code = msg.text!.trim();
+      const result = await submitLogin(chatId, code);
+      if (result.ok) {
+        await ctx.reply('✅ Залогинен. Токен обновлен, operator/dispatcher подхватят через симлинк.');
+      } else {
+        await ctx.reply(`❌ Login failed: ${result.error}\n\nПопробуй /login снова.`);
+      }
+      return; // do NOT dispatch the code to the agent
+    }
 
     if (!await gateAccess(ctx, userId, chatType)) return;
 
     if (chatType === 'private') touchUser(userId, username, displayName);
+
+    // Decide whether this message should trigger the agent. Private chats
+    // always notify; groups only when explicitly addressed. Bot identity is
+    // available via ctx.me after bot.init() — if it's somehow missing, fall
+    // back to "notify" to preserve the legacy private-DM behaviour.
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const buffered: BufferedTextMsg = {
       text: msg.text!,
@@ -252,6 +352,9 @@ export function createBot(token: string, options?: BotOptions): Bot {
       chatId,
       chatType,
       chatTitle,
+      messageThreadId,
+      isForum,
+      notify,
     };
 
     const key = `${chatId}:${userId}`;
@@ -269,9 +372,14 @@ export function createBot(token: string, options?: BotOptions): Bot {
   // Voice messages
   bot.on('message:voice', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const voice = msg.voice!;
     const caption = msg.caption ?? null;
@@ -301,15 +409,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'voice', filePath, fileName: null,
       isForward, forwardFrom, caption,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Video notes (round videos)
   bot.on('message:video_note', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const vn = msg.video_note!;
     let filePath: string | null = null;
@@ -331,15 +445,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'video_note', filePath, fileName: null,
       isForward, forwardFrom, caption: null,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Photos
   bot.on('message:photo', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const photos = msg.photo!;
     const largest = photos[photos.length - 1]; // highest resolution
@@ -362,15 +482,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'photo', filePath, fileName: null,
       isForward, forwardFrom, caption,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Documents (PDF, files, etc.)
   bot.on('message:document', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const doc = msg.document!;
     const caption = msg.caption ?? null;
@@ -398,15 +524,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'document', filePath, fileName: originalName,
       isForward, forwardFrom, caption,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Videos
   bot.on('message:video', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const video = msg.video!;
     const caption = msg.caption ?? null;
@@ -437,15 +569,21 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'video', filePath, fileName: video.file_name ?? null,
       isForward, forwardFrom, caption,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Stickers
   bot.on('message:sticker', async (ctx: Context) => {
     const msg = ctx.message!;
-    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom } = getBaseFields(msg);
+    const { userId, chatId, chatType, chatTitle, username, displayName, isForward, forwardFrom, isForum, messageThreadId } = getBaseFields(msg);
 
     if (!await gateAccess(ctx, userId, chatType)) return;
+
+    const botId = getBotIdentity(ctx);
+    const notify = botId
+      ? shouldNotifyAgent(chatType, toPolicyMessage(msg), botId)
+      : chatType === 'private';
 
     const sticker = msg.sticker!;
     const emoji = sticker.emoji ?? '?';
@@ -458,7 +596,8 @@ export function createBot(token: string, options?: BotOptions): Bot {
       quotedText: (msg as { quote?: { text?: string } }).quote?.text ?? null,
       mediaType: 'sticker', filePath: null, fileName: null,
       isForward, forwardFrom, caption: null,
-    });
+      messageThreadId, isForum,
+    }, notify);
   });
 
   // Reaction updates (Bot API 7.0+)
@@ -474,8 +613,9 @@ export function createBot(token: string, options?: BotOptions): Bot {
       : null;
 
     // Skip if user not in allowlist (anonymous reactions have no user).
-    // Read-only check (getUser, not checkAccess) so we don't auto-create
-    // 'pending' records for every group member who reacts.
+    // Use a read-only check (getUser, not checkAccess) so we don't auto-create
+    // 'pending' records for every group member who reacts to a message — that
+    // would pollute the users table when the bot sits in a group of dozens.
     if (userId !== null) {
       const existing = getUser(userId);
       if (existing && existing.status === 'denied') return;

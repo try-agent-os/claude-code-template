@@ -7,11 +7,11 @@ import { nodewhisper } from 'nodejs-whisper';
 
 const execFileP = promisify(execFile);
 
-const MEDIA_DIR = '/tmp/telegram-mcp';
-const WHISPER_MODEL = process.env.WHISPER_MODEL ?? 'small';
+const MEDIA_DIR = process.env.TELEGRAM_MCP_MEDIA_DIR ?? '/tmp/telegram-mcp';
+const WHISPER_MODEL = process.env.WHISPER_MODEL ?? 'medium';
 // When set, transcription is routed via HTTP to a long-running whisper-server
 // (model resident in RAM — saves the ~1-3s model-load on every call). When unset,
-// falls back to spawning whisper-cli per call via nodejs-whisper (Mac default).
+// falls back to spawning whisper-cli per call via nodejs-whisper.
 const WHISPER_SERVER_URL = process.env.WHISPER_SERVER_URL ?? '';
 
 function ensureMediaDir(): void {
@@ -37,7 +37,7 @@ async function transcribeViaServer(filePath: string): Promise<string | null> {
   const stats = await stat(filePath);
   // whisper-server expects multipart/form-data with field name "file".
   // `language=auto` mirrors the CLI default; temperature=0 makes it deterministic.
-  // openAsBlob (Node ≥19.8) avoids buffering the whole audio into JS heap.
+  // openAsBlob (Node >=19.8) avoids buffering the whole audio into JS heap.
   const blob = await openAsBlob(filePath);
   const form = new FormData();
   form.append('file', blob, filename);
