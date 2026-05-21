@@ -24,7 +24,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude/plugins/telegram
+# /home/{AGENT_USER}/.claude (creds dir), .claude.json (config file claude rewrites),
+# and .tmux (socket dir) must be writable for /login bot-command to complete
+# OAuth via the claude auth login pipe. Without .claude.json in this list, claude
+# auth login fails with EROFS even when other paths are writable.
+ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude/plugins/telegram /home/{AGENT_USER}/.claude /home/{AGENT_USER}/.claude.json /home/{AGENT_USER}/.tmux
 
 # Logging — telegram-mcp prints rich logs (incoming msgs, admin seed, bot events).
 StandardOutput=append:{LOG_DIR}/telegram-mcp.log
