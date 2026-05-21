@@ -1934,21 +1934,23 @@ if [ -f "$STATE_FILE" ]; then
   chmod 0640 "$STATE_FILE" 2>/dev/null || true
 fi
 
-# claude migrate-installer (run as agent-os, now that the user exists).
+# claude install stable (run as agent-os, now that the user exists).
 # The apt package ships claude at /usr/bin/claude (system-wide), but downstream
 # steps (12 mcp registration, systemd operator unit) expect
 # ${AGENT_HOME}/.local/bin/claude for two reasons:
 #   1. per-user auto-update channel doesn't touch /usr/bin (rootless update)
 #   2. the operator unit's PATH already includes ${AGENT_HOME}/.local/bin
-# Migrate is idempotent — installs into ~/.local/{bin,share}/claude and rewires
-# the canonical entrypoint. We run it once here so step 12 finds the binary
-# (was failing with "sudo: /home/agent-os/.local/bin/claude: command not found"
-# on fresh droplets where claude was only installed via apt).
+# `claude install stable` is the auth-free, idempotent way to seed the per-user
+# launcher into ~/.local/{bin,share}/claude. We run it once here so step 12
+# finds the binary (was failing with "sudo: /home/agent-os/.local/bin/claude:
+# command not found" on fresh droplets where claude was only installed via
+# apt). Note: `claude migrate-installer` was the older name and required auth
+# (chicken-and-egg with defer-login); `claude install <target>` does not.
 if command -v claude >/dev/null 2>&1; then
   if [[ ! -x "${AGENT_HOME}/.local/bin/claude" ]]; then
-    log "  running 'claude migrate-installer' for ${AGENT_USER}"
-    sudo -u "$AGENT_USER" HOME="$AGENT_HOME" claude migrate-installer < /dev/null 2>&1 \
-      | sed 's/^/    /' || warn "  claude migrate-installer failed — step 12 may fail"
+    log "  running 'claude install stable' for ${AGENT_USER}"
+    sudo -u "$AGENT_USER" HOME="$AGENT_HOME" claude install stable < /dev/null 2>&1 \
+      | sed 's/^/    /' || warn "  claude install stable failed — step 12 may fail"
     if [[ -x "${AGENT_HOME}/.local/bin/claude" ]]; then
       log "  ${AGENT_HOME}/.local/bin/claude created"
     fi
