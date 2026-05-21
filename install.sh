@@ -2175,6 +2175,55 @@ render_user_settings_json "$CC_DIR_DISPATCHER"
 render_user_settings_json "$CC_DIR_HEARTBEAT"
 log "  per-agent ~/.claude.json + settings.json rendered for operator/dispatcher/heartbeat"
 
+# claude-peers MCP server: registered as a user-scope MCP server (NOT as a
+# plugin) so that `--dangerously-load-development-channels server:claude-peers`
+# can actually find it. Plugin-scoped MCP servers register under the namespaced
+# name `plugin:<plugin-name>:<server-name>` and the channel flag's `server:`
+# prefix cannot match that. This is documented upstream (louislva/claude-peers-mcp
+# README) — its canonical install is `claude mcp add --scope user`.
+#
+# Registered in every CLAUDE_CONFIG_DIR so all agent-os Claude processes
+# (operator, dispatcher, heartbeat workers, interactive sysadmin via ~/.claude)
+# see the same MCP server set. Migrated 2026-05-20 — previously claude-peers
+# shipped as a managed plugin via marketplace.json, but that path is fundamen-
+# tally incompatible with channel push (see GH issues #15145, #27105, #30595,
+# #30138).
+register_claude_peers_mcp() {
+  local config_dir=$1
+  # Idempotent — `claude mcp add` fails if the name exists, so check first.
+  if sudo -u "$AGENT_USER" \
+       CLAUDE_CONFIG_DIR="$config_dir" \
+       PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.bun/bin:$PATH" \
+       "${AGENT_HOME}/.local/bin/claude" mcp list 2>/dev/null \
+       | grep -q "^claude-peers:"; then
+    log "  claude-peers already registered in $config_dir"
+    return 0
+  fi
+  sudo -u "$AGENT_USER" \
+    CLAUDE_CONFIG_DIR="$config_dir" \
+    PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.bun/bin:$PATH" \
+    "${AGENT_HOME}/.local/bin/claude" mcp add --scope user --transport stdio \
+      claude-peers bun "${INSTALL_ROOT}/claude/plugins/claude-peers/server.ts" \
+    && log "  registered user-scope claude-peers MCP in $config_dir"
+}
+register_claude_peers_mcp "$CC_DIR_OPERATOR"
+register_claude_peers_mcp "$CC_DIR_DISPATCHER"
+register_claude_peers_mcp "$CC_DIR_HEARTBEAT"
+# Also register for the default ${AGENT_HOME}/.claude (no CLAUDE_CONFIG_DIR set)
+# — this is what interactive `sudo -iu ${AGENT_USER}` shells use. The `claude mcp add`
+# without env override writes to ${AGENT_HOME}/.claude.json (top-level home file).
+sudo -u "$AGENT_USER" \
+  PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.bun/bin:$PATH" \
+  bash -c '
+    if "${HOME}/.local/bin/claude" mcp list 2>/dev/null | grep -q "^claude-peers:"; then
+      echo "  claude-peers already registered in ${HOME}/.claude (default)"
+    else
+      "${HOME}/.local/bin/claude" mcp add --scope user --transport stdio \
+        claude-peers bun "'"${INSTALL_ROOT}"'/claude/plugins/claude-peers/server.ts" \
+        && echo "  registered user-scope claude-peers MCP in ${HOME}/.claude (default)"
+    fi
+  '
+
 # $AGENT_HOME/.claude/settings.json — DEFAULT user-scope config dir for manual
 # sessions (sysadmin tmux, ad-hoc `claude` invocations without CLAUDE_CONFIG_DIR
 # override). Register the agentos marketplace here so claude can resolve

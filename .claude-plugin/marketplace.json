@@ -42,14 +42,6 @@
       "source": "./plugins/security-guidance/"
     },
     {
-      "name": "claude-peers",
-      "version": "vendored-fc26491",
-      "category": "agentos-core",
-      "description": "Inter-agent messaging + channel push (single-server: tools + channel capability via shared broker).",
-      "author": {"name": "Novo Studio"},
-      "source": "./plugins/claude-peers/"
-    },
-    {
       "name": "telegram",
       "version": "vendored-3f6171e",
       "category": "agentos-core",
