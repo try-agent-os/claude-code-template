@@ -1517,6 +1517,9 @@ if step_done 2 && [[ "$FORCE_REINSTALL" != 1 ]] && [[ "$RESET" != 1 ]]; then
   WHISPER_MODEL="${WHISPER_MODEL:-$(state_get "whisper_model" "small")}"
   # Secrets stay in env (already sourced from $ENV_FILE above)
   TG_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-${TG_BOT_TOKEN:-}}"
+  # defer-login state survives resume: state.json keeps the flag set during step 2;
+  # downstream steps (17 + 18) read DEFER_LOGIN to skip starting operator.
+  DEFER_LOGIN="$(state_get defer_login 0)"
 else
   prompt_resume
 
@@ -1549,6 +1552,27 @@ else
     state_set tg_admin_usernames "$TG_ADMIN_USERNAMES"
     state_set git_remote "$GIT_REMOTE"
     state_set whisper_model "$WHISPER_MODEL"
+
+    # Defer-login mode (non-interactive only)
+    # If no OAuth token + no API key were provided AND we have a Telegram bot,
+    # finish the install with operator unit enabled-but-stopped. The user then
+    # authenticates via `/login` in the bot (plugins/telegram/src/commands/login.ts),
+    # which writes ~/.claude/credentials.json and starts operator on success.
+    #
+    # Rationale: fresh users who don't have Claude Code installed locally can't
+    # easily run `claude setup-token` to get an OAuth token. The /login bot flow
+    # lets them auth from anywhere with a browser. Without this mode the install
+    # would either fail (interactive prompt with no tty) or require pasting a
+    # placeholder that produces a 401 at runtime.
+    DEFER_LOGIN=0
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      if [[ -z "${TG_BOT_TOKEN:-}" ]]; then
+        fail "Non-interactive install needs at least one of: CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or TG_BOT_TOKEN (defer-login mode). Got none."
+      fi
+      DEFER_LOGIN=1
+      info "defer-login mode: no OAuth token provided — operator will be enabled-but-stopped; authenticate later via /login in your Telegram bot."
+      state_set "defer_login" 1 number
+    fi
   else
     header "Project identity"
     PROJECT_NAME=$(ask "Project slug (alphanumeric+dash)" "project_name" "agentos")
@@ -1680,6 +1704,7 @@ fi
 
 # Export wizard outputs for downstream steps
 export PROJECT_NAME TIMEZONE TG_BOT_TOKEN TG_USER_ID TG_ADMIN_USER_IDS TG_ADMIN_USERNAMES GIT_REMOTE WHISPER_MODEL
+export DEFER_LOGIN="${DEFER_LOGIN:-0}"
 mark_step_completed 2
 
 ###############################################################################
@@ -2376,8 +2401,17 @@ step "17/18 enable + start units"
 # `activeSessions` — a map populated only by SSE clients, not stdio. Operator
 # connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
 UNITS=(agent-os-saga.service agent-os-telegram-mcp.service agent-os-dispatcher.timer)
+DEFERRED_UNITS=()
 if [[ "${MINIMAL}" == 0 ]]; then
-  UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+  if [[ "${DEFER_LOGIN:-0}" == 1 ]]; then
+    # operator can't start without OAuth credentials — keep it enabled (so it
+    # boots on next reboot after `/login` writes ~/.claude/credentials.json)
+    # but defer the start. Same for operator-watchdog (no point watching a
+    # deliberately-stopped unit).
+    DEFERRED_UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+  else
+    UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+  fi
   # whisper-server only when telegram plugin is installed (binary + model
   # live inside its node_modules). Skip under --minimal.
   if [[ -x "${INSTALL_ROOT}/claude/plugins/telegram/node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-server" ]] \
@@ -2389,6 +2423,17 @@ if [[ "${MINIMAL}" == 0 ]]; then
 fi
 
 systemctl enable --now "${UNITS[@]}"
+
+# Defer-login: enable operator (so it autostarts after /login + reboot) but
+# don't start now. Drop a sentinel so future install resumes / monitoring
+# scripts can detect the deferred-auth state.
+if [[ ${#DEFERRED_UNITS[@]} -gt 0 ]]; then
+  install -d -m 0755 "${STATE_DIR}"
+  : > "${STATE_DIR}/operator-defer-login"
+  systemctl enable "${DEFERRED_UNITS[@]}" 2>&1 | grep -v '^$' || true
+  log "  defer-login: enabled (but did NOT start) ${DEFERRED_UNITS[*]}"
+  log "  defer-login: sentinel ${STATE_DIR}/operator-defer-login created"
+fi
 mark_step_completed 17
 
 ###############################################################################
@@ -2456,6 +2501,19 @@ verify_unit() {
 }
 
 for u in "${UNITS[@]}"; do verify_unit "$u"; done
+
+# Defer-login: don't warn about operator being inactive — that's by design.
+# Report enabled state instead so the operator knows the unit is wired but
+# waiting for /login.
+if [[ ${#DEFERRED_UNITS[@]} -gt 0 ]]; then
+  for u in "${DEFERRED_UNITS[@]}"; do
+    if systemctl is-enabled --quiet "$u" 2>/dev/null; then
+      log "  [DEFER] $u enabled (will start after /login writes credentials)"
+    else
+      warn "  [WARN] $u not enabled (defer-login: expected enabled)"
+    fi
+  done
+fi
 
 # saga-mcp HTTP probe (claude-peers broker comes up only when the first plugin
 # session spawns — no probe at install time)
@@ -2610,6 +2668,13 @@ if [[ "${MINIMAL}" == 1 ]]; then
   MODE_LABEL="AgentOS installed (minimal — saga + dispatcher + claude-peers, no operator/telegram)."
   OPERATOR_LINE="  (no operator in --minimal mode — re-run install.sh without --minimal to add it)"
   LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher,saga-mcp}.log"
+elif [[ "${DEFER_LOGIN:-0}" == 1 ]]; then
+  MODE_LABEL="AgentOS installed (defer-login — operator awaits /login)."
+  OPERATOR_LINE="  Operator:      ENABLED but NOT STARTED. Send /login to your Telegram bot
+                 to authenticate Claude Code; operator starts automatically."
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher,saga-mcp}.log
+  After /login:  sudo systemctl start agent-os-operator   (if not auto-started)
+  Then attach:   sudo -u ${AGENT_USER} tmux attach -t operator"
 else
   MODE_LABEL="AgentOS installed."
   OPERATOR_LINE="  Operator tmux: sudo -u ${AGENT_USER} tmux attach -t operator"
