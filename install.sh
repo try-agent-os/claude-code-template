@@ -20,7 +20,7 @@
 #                                   no whisper.cpp build, no telegram bot wizard prompts,
 #                                   no telegram-coupled lifecycle hooks (notify-stop,
 #                                   log-subagent), no operator systemd unit.
-#                                   Result: saga-mcp + dispatcher + claude-peers only
+#                                   Result: dispatcher + claude-peers only
 #                                   (~14 install steps instead of 18).
 #   --with=feature-dev,frontend-design  Comma-separated optional plugins to vendor
 #   --non-interactive               Read all wizard answers from preset env vars (CI/automation)
@@ -116,10 +116,9 @@ readonly ANTHROPIC_KEY_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
 
 # Repos to clone. Override TEMPLATE_REPO via --bootstrap-personal-repo.
 # claude-peers and telegram are now vendored as plugins inside the template
-# repo (plugins/claude-peers, plugins/telegram). saga-mcp remains a separate
-# clone — it is a long-running broker, not a plugin.
+# repo (plugins/claude-peers, plugins/telegram). The task system is ClickUp
+# (Composio CLI) — the old saga-mcp broker was decommissioned 2026-05-23.
 TEMPLATE_REPO="https://github.com/try-agent-os/claude-code-template"
-readonly SAGA_MCP_REPO="https://github.com/try-agent-os/saga-mcp"
 
 # Defaults
 # WHISPER_MODEL: respects env var, defaults to "small" (244MB).
@@ -923,9 +922,9 @@ exec_remote_setup_wizard() {
   fi
   ok "Homebrew: $(brew --version 2>&1 | head -1)"
 
-  # gh CLI — required for personal-repo dual-deployment (saga #814) unless
+  # gh CLI — required for personal-repo dual-deployment (task #814) unless
   # opted out via --skip-personal-repo. Auto-install via brew if missing
-  # (saga #815: wizard does the work, user doesn't pre-prepare).
+  # (task #815: wizard does the work, user doesn't pre-prepare).
   if [[ "${SKIP_PERSONAL_REPO:-0}" != 1 ]]; then
     if ! command -v gh >/dev/null 2>&1; then
       ensure_brew_cli gh gh "GitHub CLI" || fail "GitHub CLI install was declined. Re-run with --skip-personal-repo to deploy without a personal fork."
@@ -1148,7 +1147,7 @@ EOF
   fi
 
   ###########################################################################
-  # Step 4d — Personal repo setup (saga #814 dual deployment)
+  # Step 4d — Personal repo setup (task #814 dual deployment)
   #
   # Pattern: clone the template into a private fork on the user's GitHub,
   # also clone locally to a Mac path, point the VPS at that fork. User edits
@@ -1233,7 +1232,7 @@ EOF
   fi
 
   ###########################################################################
-  # Step 4e — Deploy key for VPS → user repo (saga #814)
+  # Step 4e — Deploy key for VPS → user repo (task #814)
   #
   # Generates an ed25519 keypair on the Mac, scps the privkey to the VPS as
   # /root/.ssh/agentos_deploy_key, configures /root/.ssh/config so any git
@@ -1255,7 +1254,7 @@ EOF
     fi
 
     # Add to user's repo as deploy key. Allow-write only if bidirectional sync
-    # was opted into (we default pull-only — saga #814 design Q5).
+    # was opted into (we default pull-only — task #814 design Q5).
     local DEPLOY_TITLE="agentos-${SSH_ALIAS}"
     if gh repo deploy-key list -R "${GH_USER}/${USER_REPO_NAME}" 2>/dev/null | grep -q "${DEPLOY_TITLE}"; then
       info "Deploy key '${DEPLOY_TITLE}' already on repo — skipping"
@@ -1278,7 +1277,7 @@ EOF
     scp -q "${DEPLOY_KEY}" "${SSH_ALIAS}:/root/.ssh/agentos_deploy_key" || fail "scp deploy key failed"
     ssh "${SSH_ALIAS}" "chmod 600 /root/.ssh/agentos_deploy_key && \
       grep -q 'Host github.com.*agentos' /root/.ssh/config 2>/dev/null || \
-      printf '\n# AgentOS deploy key (saga #814)\nHost github.com\n  IdentityFile /root/.ssh/agentos_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> /root/.ssh/config" \
+      printf '\n# AgentOS deploy key (task #814)\nHost github.com\n  IdentityFile /root/.ssh/agentos_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> /root/.ssh/config" \
       || fail "deploy key install on VPS failed"
     ok "  /root/.ssh/agentos_deploy_key installed + ssh config wired for github.com"
   fi
@@ -1439,7 +1438,7 @@ fi
 ###############################################################################
 # Step 1 — sanity (root, OS, arch) — Linux-only branch
 ###############################################################################
-step "1/18 sanity checks"
+step "1/17 sanity checks"
 
 [[ $EUID -eq 0 ]] || fail "Run as root (use sudo)."
 
@@ -1464,7 +1463,7 @@ mark_step_completed 1
 ###############################################################################
 # Step 2 — wizard (state-file-backed, resumable)
 ###############################################################################
-step "2/18 wizard"
+step "2/17 wizard"
 
 # Ensure state dir exists for state file (root:agent-os comes later, but root for now)
 mkdir -p "$ETC_DIR"
@@ -1710,7 +1709,7 @@ mark_step_completed 2
 ###############################################################################
 # Step 3 — APT prereqs (incl. bubblewrap + socat for sandbox)
 ###############################################################################
-step "3/18 apt prereqs"
+step "3/17 apt prereqs"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -1760,7 +1759,7 @@ mark_step_completed 3
 ###############################################################################
 # Step 4 — Node 20 LTS via NodeSource
 ###############################################################################
-step "4/18 node 20 lts"
+step "4/17 node 20 lts"
 
 need_node=1
 if command -v node >/dev/null 2>&1; then
@@ -1789,7 +1788,7 @@ mark_step_completed 4
 # agent-os system user (mode 0700 on /root). apt installs to /usr/bin/claude,
 # system-wide readable, plus gives proper `apt-get upgrade claude-code`.
 ###############################################################################
-step "5/18 claude-code (signed apt repo)"
+step "5/17 claude-code (signed apt repo)"
 
 KEYRING="/etc/apt/keyrings/claude-code.asc"
 SOURCES_LIST="/etc/apt/sources.list.d/claude-code.list"
@@ -1830,7 +1829,7 @@ mark_step_completed 5
 ###############################################################################
 # Step 6 — user + dirs
 ###############################################################################
-step "6/18 user + dirs"
+step "6/17 user + dirs"
 
 if ! id "$AGENT_USER" >/dev/null 2>&1; then
   # System user, no login password, /bin/bash so `sudo -u agent-os tmux attach` works
@@ -1964,7 +1963,7 @@ mark_step_completed 6
 ###############################################################################
 # Step 7 — bun (as agent-os user)
 ###############################################################################
-step "7/18 bun"
+step "7/17 bun"
 
 if [[ ! -x "${AGENT_HOME}/.bun/bin/bun" ]]; then
   sudo -u "$AGENT_USER" bash -c 'curl -fsSL https://bun.sh/install | bash'
@@ -1977,7 +1976,7 @@ mark_step_completed 7
 ###############################################################################
 # Step 8 — clone repos
 ###############################################################################
-step "8/18 clone repos"
+step "8/17 clone repos"
 
 clone_or_pull() {
   local url=$1 dest=$2
@@ -1992,7 +1991,6 @@ clone_or_pull() {
 }
 
 clone_or_pull "$TEMPLATE_REPO" "${INSTALL_ROOT}/claude"
-clone_or_pull "$SAGA_MCP_REPO" "${INSTALL_ROOT}/saga-mcp"
 
 # claude-peers and telegram are vendored as plugins inside the template repo
 # (plugins/claude-peers, plugins/telegram). No separate clone needed — they
@@ -2007,9 +2005,9 @@ fi
 mark_step_completed 8
 
 ###############################################################################
-# Step 9 — build vendored plugin MCP runtimes + saga-mcp
+# Step 9 — build vendored plugin MCP runtimes
 ###############################################################################
-step "9/18 build plugin MCPs + saga-mcp"
+step "9/17 build plugin MCPs"
 
 if [[ "$SKIP_BUILD" == 1 ]]; then
   log "  --skip-build: assuming dist/ artefacts already present"
@@ -2048,23 +2046,13 @@ if [[ -d \$WMODELS ]]; then
 fi
 EOF
   fi
-
-  # saga-mcp (node + tsc) — separate broker, not a plugin
-  sudo -u "$AGENT_USER" bash <<EOF
-set -euo pipefail
-cd "${INSTALL_ROOT}/saga-mcp"
-if [[ ! -d node_modules ]] || [[ package.json -nt node_modules/.package-lock.json ]]; then
-  npm ci --no-audit --no-fund
-fi
-[[ -f dist/index.js ]] || npm run build
-EOF
 fi
 mark_step_completed 9
 
 ###############################################################################
 # Step 10 — render systemd unit templates
 ###############################################################################
-step "10/18 render systemd units"
+step "10/17 render systemd units"
 
 if [[ ! -d "${TEMPLATE_DIR}/systemd" ]]; then
   fail "systemd templates not found in ${TEMPLATE_DIR}/systemd"
@@ -2088,8 +2076,7 @@ render_unit() {
   chmod 0644 "$dest"
 }
 
-for unit in agent-os-saga.service \
-            agent-os-telegram-mcp.service \
+for unit in agent-os-telegram-mcp.service \
             agent-os-whisper-server.service \
             agent-os-dispatcher.service \
             agent-os-dispatcher.timer \
@@ -2113,7 +2100,7 @@ mark_step_completed 10
 ###############################################################################
 # Step 11 — write /etc/agent-os/agent-os.env
 ###############################################################################
-step "11/18 env file"
+step "11/17 env file"
 
 # Preserve existing values when re-running
 mkdir -p "$ETC_DIR"
@@ -2140,7 +2127,6 @@ umask 077
   echo "TELEGRAM_USER_ID=${TG_USER_ID:-}"
   echo
   echo "# --- AgentOS state paths ---"
-  echo "DB_PATH=${STATE_DIR}/saga.db"
   echo "CLAUDE_PEERS_DB=${STATE_DIR}/claude-peers.db"
   # NOTE: telegram plugin's messages.db lives inside the plugin install dir
   # (resolved by Claude Code via plugin discovery). No env path needed.
@@ -2167,7 +2153,6 @@ umask 077
   echo "OPERATOR_PEER_ID=${OPERATOR_PEER_ID:-}"
   echo "CLAUDE_PEERS_API_URL=http://127.0.0.1:7899/send-message"
   echo "CLAUDE_PEERS_HEALTH_URL=http://127.0.0.1:7899/health"
-  echo "SAGA_MCP_HEALTH_URL=http://localhost:3851/health"
   echo "AGENTOS_HOOKS_LOG_DIR=/tmp/agentos-hooks"
   echo "AGENTOS_AUDIT_LOG=${INSTALL_ROOT}/claude/.claude/audit.log"
 } > "$ENV_FILE"
@@ -2180,7 +2165,7 @@ mark_step_completed 11
 ###############################################################################
 # Step 12 — render per-agent .claude.json
 ###############################################################################
-step "12/18 per-agent claude config"
+step "12/17 per-agent claude config"
 
 CLAUDE_CFG_TPL="${TEMPLATE_DIR}/.claude-config.template.json"
 
@@ -2302,13 +2287,13 @@ mark_step_completed 12
 ###############################################################################
 # Step 13 — managed-settings.json (org-wide claude-code policy)
 ###############################################################################
-step "13/18 managed-settings"
+step "13/17 managed-settings"
 
 MS_TPL="${TEMPLATE_DIR}/managed-settings.template.json"
 if [[ -f "$MS_TPL" ]]; then
   if [[ "${MINIMAL}" == 1 ]]; then
     # Strip telegram@agentos from enabledPlugins + allowedChannelPlugins,
-    # and drop mcp__telegram__* permission. Result is a saga + claude-peers
+    # and drop mcp__telegram__* permission. Result is a claude-peers
     # only managed-settings.json — no telegram references at all.
     # NOTE: enabledPlugins is an OBJECT (record) — use `del(.[name])`.
     # allowedChannelPlugins is an ARRAY of {plugin, marketplace} objects —
@@ -2333,7 +2318,7 @@ mark_step_completed 13
 ###############################################################################
 # Step 14 — install + reload systemd
 ###############################################################################
-step "14/18 systemd reload"
+step "14/17 systemd reload"
 
 systemctl daemon-reload
 mark_step_completed 14
@@ -2346,7 +2331,7 @@ mark_step_completed 14
 # are also a heavier dependency footprint. For minimal: keep only the core
 # guard + boot + enrich + session-end set.
 if [[ "${MINIMAL}" == 1 ]]; then
-  step "14b/18 minimal — strip telegram/operator-coupled hooks"
+  step "14b/17 minimal — strip telegram/operator-coupled hooks"
   CLAUDE_REPO_DIR="${INSTALL_ROOT}/claude"
   HOOKS_TO_REMOVE=(notify-stop.sh log-subagent.sh log-action.sh)
   for h in "${HOOKS_TO_REMOVE[@]}"; do
@@ -2368,28 +2353,9 @@ if [[ "${MINIMAL}" == 1 ]]; then
 fi
 
 ###############################################################################
-# Step 15 — initialize saga DB (first-boot)
+# Step 15 — optional plugins
 ###############################################################################
-step "15/18 saga db init"
-
-INIT_SCRIPT="${INSTALL_ROOT}/claude/scripts/init-epics.sh"
-if [[ -x "$INIT_SCRIPT" ]]; then
-  if [[ ! -f "${STATE_DIR}/saga.db" ]]; then
-    sudo -u "$AGENT_USER" \
-      env DB_PATH="${STATE_DIR}/saga.db" "$INIT_SCRIPT" || \
-      warn "  init-epics.sh exited non-zero — saga will create DB on first request"
-  else
-    log "  saga.db already exists"
-  fi
-else
-  log "  init-epics.sh not found — saga-mcp will auto-create DB on first connect"
-fi
-mark_step_completed 15
-
-###############################################################################
-# Step 16 — optional plugins
-###############################################################################
-step "16/18 optional plugins"
+step "15/17 optional plugins"
 
 if [[ -n "${WITH_PLUGINS}" ]]; then
   PLUGINS_DIR="${INSTALL_ROOT}/claude/plugins"
@@ -2411,12 +2377,12 @@ if [[ -n "${WITH_PLUGINS}" ]]; then
 else
   log "  no --with= plugins requested"
 fi
-mark_step_completed 16
+mark_step_completed 15
 
 ###############################################################################
-# Step 17 — enable + start
+# Step 16 — enable + start
 ###############################################################################
-step "17/18 enable + start units"
+step "16/17 enable + start units"
 
 # NOTE: claude-peers is an stdio MCP plugin, spawned by Claude Code itself per
 # session — its broker daemon auto-bootstraps from server.ts on first spawn.
@@ -2426,7 +2392,7 @@ step "17/18 enable + start units"
 # also fails because telegram-mcp pushes channel notifications by iterating
 # `activeSessions` — a map populated only by SSE clients, not stdio. Operator
 # connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
-UNITS=(agent-os-saga.service agent-os-telegram-mcp.service agent-os-dispatcher.timer)
+UNITS=(agent-os-telegram-mcp.service agent-os-dispatcher.timer)
 DEFERRED_UNITS=()
 if [[ "${MINIMAL}" == 0 ]]; then
   if [[ "${DEFER_LOGIN:-0}" == 1 ]]; then
@@ -2463,7 +2429,7 @@ fi
 mark_step_completed 17
 
 ###############################################################################
-# Step 17.5 — auto-sync cron (saga #814 dual-deployment)
+# Step 17.5 — auto-sync cron (task #814 dual-deployment)
 #
 # If the user provisioned a personal repo + opted into auto-sync, install a
 # cron job that pulls from the user's fork every 5 minutes. The deploy key
@@ -2473,7 +2439,7 @@ mark_step_completed 17
 if [[ "${AUTO_SYNC_VPS:-0}" == 1 ]] \
    && [[ -f /root/.ssh/agentos_deploy_key ]] \
    && [[ -d "${INSTALL_ROOT}/claude/.git" ]]; then
-  step "17.5/18 auto-sync cron (saga #814)"
+  step "16.5/17 auto-sync cron (task #814)"
 
   # Share the deploy key with agent-os so cron-as-agent-os can git pull.
   install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0700 "${AGENT_HOME}/.ssh"
@@ -2484,7 +2450,7 @@ if [[ "${AUTO_SYNC_VPS:-0}" == 1 ]] \
   if ! grep -q "agentos_deploy_key" "${AGENT_HOME}/.ssh/config" 2>/dev/null; then
     sudo -u "$AGENT_USER" tee -a "${AGENT_HOME}/.ssh/config" >/dev/null <<EOF
 
-# AgentOS deploy key (saga #814 — auto-sync from user's fork)
+# AgentOS deploy key (task #814 — auto-sync from user's fork)
 Host github.com
   IdentityFile ${AGENT_HOME}/.ssh/agentos_deploy_key
   IdentitiesOnly yes
@@ -2497,7 +2463,7 @@ EOF
 
   # Cron job — runs as agent-os, pulls every 5 min, logs to /var/log/agent-os.
   cat > /etc/cron.d/agent-os-sync <<EOF
-# AgentOS auto-sync from user's fork — installed by install.sh saga #814.
+# AgentOS auto-sync from user's fork — installed by install.sh task #814.
 # Pulls the latest template + user customisations every 5 min. Disable by
 # removing this file.
 SHELL=/bin/bash
@@ -2513,7 +2479,7 @@ fi
 ###############################################################################
 # Step 18 — wait + verify
 ###############################################################################
-step "18/18 verify"
+step "17/17 verify"
 
 sleep 6
 
@@ -2541,14 +2507,6 @@ if [[ ${#DEFERRED_UNITS[@]} -gt 0 ]]; then
   done
 fi
 
-# saga-mcp HTTP probe (claude-peers broker comes up only when the first plugin
-# session spawns — no probe at install time)
-if curl -fsS --max-time 3 http://127.0.0.1:3851/health >/dev/null 2>&1 \
-  || curl -fsS --max-time 3 http://127.0.0.1:3851/ >/dev/null 2>&1; then
-  log "  [OK] saga-mcp responding on :3851"
-else
-  warn "  [WARN] saga-mcp not responding — check journalctl -u agent-os-saga"
-fi
 mark_step_completed 18
 
 ###############################################################################
@@ -2606,7 +2564,7 @@ if [[ "${NO_FIREWALL:-0}" != 1 ]]; then
     ufw default deny incoming >/dev/null
     ufw default allow outgoing >/dev/null
     ufw allow ssh/tcp >/dev/null
-    # Note: telegram-mcp (3848), saga-mcp (3851), peers broker (7899) bind to
+    # Note: telegram-mcp (3848), peers broker (7899) bind to
     # 127.0.0.1 by default — no inbound rule needed.
     ufw --force enable >/dev/null
     log "  ufw: default deny incoming, allow ssh (no rate limit; fail2ban handles brute-force)"
@@ -2691,20 +2649,20 @@ fi
 # Final summary
 ###############################################################################
 if [[ "${MINIMAL}" == 1 ]]; then
-  MODE_LABEL="AgentOS installed (minimal — saga + dispatcher + claude-peers, no operator/telegram)."
+  MODE_LABEL="AgentOS installed (minimal — dispatcher + claude-peers, no operator/telegram)."
   OPERATOR_LINE="  (no operator in --minimal mode — re-run install.sh without --minimal to add it)"
-  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher,saga-mcp}.log"
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher}.log"
 elif [[ "${DEFER_LOGIN:-0}" == 1 ]]; then
   MODE_LABEL="AgentOS installed (defer-login — operator awaits /login)."
   OPERATOR_LINE="  Operator:      ENABLED but NOT STARTED. Send /login to your Telegram bot
                  to authenticate Claude Code; operator starts automatically."
-  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher,saga-mcp}.log
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{dispatcher}.log
   After /login:  sudo systemctl start agent-os-operator   (if not auto-started)
   Then attach:   sudo -u ${AGENT_USER} tmux attach -t operator"
 else
   MODE_LABEL="AgentOS installed."
   OPERATOR_LINE="  Operator tmux: sudo -u ${AGENT_USER} tmux attach -t operator"
-  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher,saga-mcp}.log"
+  LOGS_LINE="  Logs:          tail -f ${LOG_DIR}/{operator,dispatcher}.log"
 fi
 
 cat <<EOF
