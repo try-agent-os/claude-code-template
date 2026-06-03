@@ -1,0 +1,16 @@
+[Unit]
+Description=Run AgentOS operator silence-restart detector every 2 minutes
+Documentation=https://github.com/try-agent-os/claude-code-template/blob/main/scripts/operator-autocompact/README.md
+Requires=agent-os-operator-autocompact.service
+
+[Timer]
+# 3 min after boot — give operator + telegram-mcp time to settle.
+OnBootSec=3min
+# 2 min cadence. The detector itself enforces threshold/cooldown/dedup-flag
+# semantics, so this is just the polling rate.
+OnUnitActiveSec=2min
+Unit=agent-os-operator-autocompact.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
