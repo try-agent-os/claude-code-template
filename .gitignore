@@ -1,4 +1,5 @@
 .worktrees/
+/.claude/worktrees/
 .DS_Store
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -27,6 +28,10 @@
 /memory/sweeps/
 
 # Runtime logs / audit trails / session state — high-churn, low-signal-to-noise.
+# Policy: ephemeral cursors / dedup state / runtime locks are NOT history —
+# they churn on every tick and only produce merge noise. Append-only logs you
+# actually analyze later may stay tracked (with periodic rotation); pure
+# position-markers never should.
 /logs/
 /log/
 /var/log/
@@ -37,8 +42,13 @@ saga-mcp.log
 telegram-mcp*.log
 *.session.jsonl
 /.claude/audit.log
+/.claude/scheduled_tasks.lock
+/.claude/settings.local.json
+/.claude/agent-memory/
 /memory/sessions.log
+/memory/sessions/
 /memory/worker-activity.log
+/memory/worker-activity/
 
 # Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
 .env
@@ -52,18 +62,29 @@ id_rsa*
 id_ed25519*
 !*.pub
 
-# Plugin runtime state
+# Plugin runtime state — SQLite DBs are runtime, never commit (any location).
 plugins/telegram/messages.db
 plugins/telegram/messages.db-*
 plugins/claude-peers/*.db
 plugins/claude-peers/*.db-*
+**/messages.db
+**/messages.db-*
 plugins/*/dist/
 plugins/*/node_modules/
+
+# Dagu runtime cache — binary index rebuilt from *.yaml on each start, pure churn.
+/routines/.dag.index
+
+# Local per-host binaries (gh, etc.) — installed per machine, not shared via git.
+/bin/
 
 # Build output
 node_modules/
 dist/
 *.tsbuildinfo
+**/__pycache__/
+*.pyc
+*.pid
 
 # OS
 Thumbs.db
