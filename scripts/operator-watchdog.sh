@@ -11,7 +11,11 @@
 
 set -euo pipefail
 
-DB="${OPERATOR_WATCHDOG_DB:-/opt/agent-os/claude/plugins/telegram/messages.db}"
+# Self-locating default: the script lives at <repo>/scripts/, the telegram
+# plugin DB at <repo>/plugins/telegram/. A hardcoded install path silently
+# breaks every non-default layout (alternative INSTALL_ROOT, worktrees).
+_WD_REPO="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+DB="${OPERATOR_WATCHDOG_DB:-$_WD_REPO/plugins/telegram/messages.db}"
 THRESHOLD_MIN="${OPERATOR_WATCHDOG_THRESHOLD_MIN:-15}"
 COOLDOWN_MIN="${OPERATOR_WATCHDOG_COOLDOWN_MIN:-20}"
 LOG_DIR="/var/log/agent-os"

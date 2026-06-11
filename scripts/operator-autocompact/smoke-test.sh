@@ -31,7 +31,8 @@
 
 set -euo pipefail
 
-REPO="${REPO_ROOT:-/opt/agent-os/claude}"
+_SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${REPO_ROOT:-$(dirname "$(dirname "$_SMOKE_DIR")")}"
 AGENT_USER="${OPERATOR_AGENT_USER:-agent-os}"
 STATE_DIR=/var/lib/agent-os
 EPOCH=$STATE_DIR/operator-last-user-msg-epoch
