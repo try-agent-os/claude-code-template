@@ -40,6 +40,19 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   exit 0
 fi
 
+# Preflight gate: validate settings.json + tmux + optional backend check
+# BEFORE spawning. A single invalid permission rule in settings.json shows a
+# blocking startup dialog and every headless worker hangs until the timeout
+# janitor kills it — skip the tick instead. exit 0 (not 1) so a scheduled
+# caller doesn't go red on an infra blip; the next tick retries.
+if [[ -f "$REPO_ROOT/scripts/worker-preflight.sh" ]]; then
+  if ! bash "$REPO_ROOT/scripts/worker-preflight.sh"; then
+    echo "SKIP: preflight failed — not spawning worker $SESSION_NAME (see stderr above)" >&2
+    exit 0
+  fi
+  echo "preflight OK: spawning worker $SESSION_NAME" >&2
+fi
+
 # Create worker directory (clean previous run)
 rm -rf "$WORKER_DIR"
 mkdir -p "$WORKER_DIR"

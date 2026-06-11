@@ -77,6 +77,26 @@ fi
 CWD="${CWD:-$HOME}"
 [[ -d "$CWD" ]] || die "cwd not a directory: $CWD"
 
+# Settings-check before spawning claude (manual/interactive path — full
+# worker-preflight not needed). A broken settings.json causes a blocking
+# "Settings Warning" dialog that hangs an interactive session just as badly
+# as a headless worker.
+if [[ "$WANT_CLAUDE" -eq 1 ]] && [[ -f "$INSTALL_ROOT/scripts/validate-worker-settings.py" ]]; then
+  _cfg="${CLAUDE_CONFIG_DIR:-}"
+  if [[ -z "$_cfg" ]]; then
+    _cfg_base="${CLAUDE_CONFIG_BASE:-/var/lib/agent-os/claude-config}"
+    for _c in "$_cfg_base/operator" "$_cfg_base/dispatcher" \
+              "$_cfg_base/heartbeat" "$HOME/.claude"; do
+      [[ -f "$_c/.claude.json" || -f "$_c/settings.json" ]] && { _cfg="$_c"; break; }
+    done
+  fi
+  if [[ -n "$_cfg" ]]; then
+    if ! python3 "$INSTALL_ROOT/scripts/validate-worker-settings.py" "$_cfg" >/dev/null 2>&1; then
+      die "invalid settings.json in ${_cfg} — fix before spawning a claude session (see scripts/validate-worker-settings.py)"
+    fi
+  fi
+fi
+
 # Build inner command.
 if [[ "$WANT_CLAUDE" -eq 1 ]]; then
   # Pass --dangerously-skip-permissions so the session is non-interactive-safe;
