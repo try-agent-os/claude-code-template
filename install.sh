@@ -2082,7 +2082,9 @@ for unit in agent-os-telegram-mcp.service \
             agent-os-dispatcher.timer \
             agent-os-operator.service \
             agent-os-operator-watchdog.service \
-            agent-os-operator-watchdog.timer ; do
+            agent-os-operator-watchdog.timer \
+            agent-os-dagu-watchdog.service \
+            agent-os-dagu-watchdog.timer ; do
   src="${TEMPLATE_DIR}/systemd/${unit}"
   if [[ ! -f "$src" ]]; then
     warn "  template missing: $src — skipping"
@@ -2411,6 +2413,15 @@ if [[ "${MINIMAL}" == 0 ]]; then
     UNITS+=(agent-os-whisper-server.service)
   else
     warn "  whisper-server binary or model missing — skipping unit enable"
+  fi
+  # dagu-watchdog only when a Dagu scheduler unit exists on this host
+  # (deployments that adopted the Dagu routines layer, see
+  # docs/decisions/0001-scheduling-layer-dagu.md). Out-of-band restart of a
+  # hung-but-alive scheduler; harmless no-op otherwise, so just skip.
+  if systemctl list-unit-files agent-os-dagu.service 2>/dev/null | grep -q agent-os-dagu.service; then
+    UNITS+=(agent-os-dagu-watchdog.timer)
+  else
+    log "  agent-os-dagu.service not installed — skipping dagu-watchdog.timer enable (rendered, enable later if you adopt Dagu)"
   fi
 fi
 

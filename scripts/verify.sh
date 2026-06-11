@@ -947,6 +947,17 @@ check_logs() {
       fi
     done
   fi
+
+  # Submodule drift: a checked-out submodule that diverged from the recorded
+  # pointer means agents read/analyze stale or unexpected code without noticing.
+  local sub_drift
+  sub_drift="$(git -C "$PROJECT_DIR" submodule status 2>/dev/null | grep '^[+-]' || true)"
+  if [ -n "$sub_drift" ]; then
+    emit WARN "logs" "submodule drift (checkout != recorded pointer): $(echo "$sub_drift" | awk '{print $2}' | tr '\n' ' ')" \
+      "git submodule update --init — or commit the intended pointer bump"
+  else
+    emit PASS "logs" "submodules in sync with recorded pointers"
+  fi
 }
 
 ###############################################################################
