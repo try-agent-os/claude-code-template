@@ -2083,6 +2083,8 @@ for unit in agent-os-telegram-mcp.service \
             agent-os-operator.service \
             agent-os-operator-watchdog.service \
             agent-os-operator-watchdog.timer \
+            agent-os-operator-liveness.service \
+            agent-os-operator-liveness.timer \
             agent-os-dagu-watchdog.service \
             agent-os-dagu-watchdog.timer ; do
   src="${TEMPLATE_DIR}/systemd/${unit}"
@@ -2402,9 +2404,9 @@ if [[ "${MINIMAL}" == 0 ]]; then
     # boots on next reboot after `/login` writes ~/.claude/credentials.json)
     # but defer the start. Same for operator-watchdog (no point watching a
     # deliberately-stopped unit).
-    DEFERRED_UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+    DEFERRED_UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer agent-os-operator-liveness.timer)
   else
-    UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer)
+    UNITS+=(agent-os-operator.service agent-os-operator-watchdog.timer agent-os-operator-liveness.timer)
   fi
   # whisper-server only when telegram plugin is installed (binary + model
   # live inside its node_modules). Skip under --minimal.

@@ -1,0 +1,17 @@
+[Unit]
+Description=AgentOS operator liveness watchdog (Layer B — hard tmux/claude death)
+Documentation=https://github.com/try-agent-os/claude-code-template
+After=agent-os-operator.service
+
+[Service]
+Type=oneshot
+User=root
+# Runs as root because it calls `systemctl restart` on the operator unit.
+# Loop prevention (rate-limit + debounce) lives in the script itself.
+# Complements operator-watchdog.sh: that catches a SOFT hang (operator alive but
+# not replying); this catches HARD death (tmux session gone / claude process
+# gone / unit inactive) within ~60s. Every behavior is env-overridable so the
+# same script can drive per-instance operator watchdogs.
+ExecStart=/bin/bash {INSTALL_ROOT}/claude/scripts/operator-liveness-watchdog.sh
+StandardOutput=journal
+StandardError=journal

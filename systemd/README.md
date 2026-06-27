@@ -18,6 +18,8 @@ The macOS counterparts live in [`../launchd/`](../launchd/).
 | `agent-os-dispatcher.timer` | timer | Fires `agent-os-dispatcher.service` periodically. `OnBootSec=2min`, `OnUnitActiveSec={DISPATCHER_INTERVAL_SEC}sec`. | n/a |
 | `agent-os-operator-watchdog.service` | `oneshot` | Restarts the operator when it stops answering incoming Telegram messages (`scripts/operator-watchdog.sh`). Triggered by its `.timer`. | n/a |
 | `agent-os-operator-watchdog.timer` | timer | Fires the operator watchdog. `OnBootSec=2min`, `OnUnitActiveSec=5min`, `Persistent=true`. | n/a |
+| `agent-os-operator-liveness.service` | `oneshot` | Layer-B watchdog for HARD operator death — tmux session gone / `claude` process gone / unit inactive (`scripts/operator-liveness-watchdog.sh`). Complements the soft-hang `operator-watchdog`; recovers within ~60s. All behavior is env-overridable (`OPERATOR_SERVICE`, `OPERATOR_TMUX_SESSION`, …) so the same script can drive per-instance operator watchdogs. | n/a |
+| `agent-os-operator-liveness.timer` | timer | Fires the liveness watchdog. `OnBootSec=1min`, `OnUnitActiveSec=1min`, `AccuracySec=5s`, `Persistent=true`. | n/a |
 | `agent-os-dagu-watchdog.service` | `oneshot` | Out-of-band watchdog for the Dagu scheduler (`scripts/dagu-watchdog.sh`): restarts `agent-os-dagu.service` when its proof-of-life heartbeat file goes stale >15 min. Only enabled when a Dagu unit exists (see script header for the heartbeat DAG setup). | n/a |
 | `agent-os-dagu-watchdog.timer` | timer | Fires the Dagu watchdog. `OnBootSec=5min`, `OnUnitActiveSec=10min`, `Persistent=true`. | n/a |
 
