@@ -14,6 +14,7 @@ import {
 } from './group-policy.js';
 import { extractMediaUrl, processUrl, processVideo, transcribeVoice } from './media-pipeline.js';
 import { isLoginAdmin, isLoginPending, submitLogin } from './login-flow.js';
+import { isClearCommand, isClearAdmin, handleClear } from './clear-flow.js';
 import type { ChatType, IncomingMessageEvent, MediaType } from './types.js';
 
 export interface ReactionEvent {
@@ -329,6 +330,33 @@ export function createBot(token: string, options?: BotOptions): Bot {
     if (!await gateAccess(ctx, userId, chatType)) return;
 
     if (chatType === 'private') touchUser(userId, username, displayName);
+
+    // /clear interception (owner-only, private chat): clear the operator's Claude
+    // context IN-PLACE by injecting a NATIVE `/clear` into its tmux session, rather
+    // than letting `/clear` reach the agent as a normal channel-push (the agent
+    // can't clear its own context from inside the conversation). No restart, MCP
+    // connections stay alive. We persist the IN (thread history) and an OUT ack so
+    // any reply-gap watchdog sees a reply and does NOT trigger a restart.
+    if (chatType === 'private' && isClearCommand(msg.text) && isClearAdmin(userId)) {
+      saveMessage({
+        telegram_message_id: msg.message_id, chat_id: chatId, chat_type: chatType,
+        chat_title: chatTitle, user_id: null, username, display_name: displayName,
+        text: msg.text!, direction: 'in', reply_to_message_id: msg.reply_to_message?.message_id ?? null,
+        media_type: null, file_path: null, file_name: null,
+      });
+      const result = await handleClear();
+      const ackText = result.ok
+        ? '🧹 Context cleared (native /clear — session alive, MCP connections intact).'
+        : `⚠️ Could not clear context: ${result.error ?? 'unknown error'}`;
+      const sent = await ctx.reply(ackText);
+      saveMessage({
+        telegram_message_id: sent.message_id, chat_id: chatId, chat_type: chatType,
+        chat_title: chatTitle, user_id: null, username: null, display_name: null,
+        text: ackText, direction: 'out', reply_to_message_id: msg.message_id,
+        media_type: null, file_path: null, file_name: null,
+      });
+      return; // handled here — do NOT dispatch /clear to the agent
+    }
 
     // Decide whether this message should trigger the agent. Private chats
     // always notify; groups only when explicitly addressed. Bot identity is
