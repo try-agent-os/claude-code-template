@@ -1,0 +1,18 @@
+[Unit]
+Description=Detect Claude OAuth config-dir drift + dead token (every 7 min)
+Documentation=https://github.com/try-agent-os/claude-code-template
+Requires=agent-os-oauth-detect.service
+
+[Timer]
+# Ticks far more often than the hourly refresher: drift (a config dir turning
+# into a stale real file) causes ~45-min worker thrash, so we want to catch and
+# auto-relink it within minutes, not within an hour.
+OnBootSec=3min
+OnUnitActiveSec=7min
+# Run a missed tick right after downtime/boot so drift introduced while the box
+# was off is repaired immediately.
+Persistent=true
+Unit=agent-os-oauth-detect.service
+
+[Install]
+WantedBy=timers.target

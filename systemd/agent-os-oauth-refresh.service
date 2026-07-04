@@ -1,0 +1,26 @@
+[Unit]
+Description=AgentOS Claude CLI OAuth token refresher (single-writer)
+Documentation=https://github.com/try-agent-os/claude-code-template
+# Network required to reach the token endpoint (platform.claude.com).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={AGENT_USER}
+Group={AGENT_USER}
+WorkingDirectory={INSTALL_ROOT}/claude
+EnvironmentFile=-{ENV_FILE}
+Environment=HOME={AGENT_HOME}
+Environment=PATH={AGENT_HOME}/.local/bin:{AGENT_HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Canonical credentials file is the real .credentials.json in the session
+# config-dir ({CLAUDE_CONFIG_DIR}); with a single config dir there is no
+# ~/.claude symlink fan-out. Point the refresher straight at it.
+Environment=OAUTH_CRED_FILE={CLAUDE_CONFIG_DIR}/.credentials.json
+Environment=OAUTH_REFRESH_LOCK={CLAUDE_CONFIG_DIR}/.oauth-refresh.lock
+# Threshold mode (no --force): the script touches the token endpoint only when
+# the current token has < OAUTH_REFRESH_SKEW_SEC (default 2h) of life left, so
+# the hourly timer is cheap and avoids needless refresh-token rotation.
+ExecStart={INSTALL_ROOT}/claude/scripts/oauth-refresh/refresh.sh
+TimeoutStartSec=60
+Nice=10

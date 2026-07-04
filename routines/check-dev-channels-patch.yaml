@@ -1,0 +1,21 @@
+# check-dev-channels-patch — keep the DevChannelsDialog gate patched after CC auto-updates.
+# Claude Code auto-updates drop a new versions/<NEW> binary (unpatched) and flip the
+# ~/.local/bin/claude symlink, so the WARNING dialog comes back on the next launch.
+# The operator service already self-heals on boot (ExecStartPre), but operator boot
+# timing is not guaranteed daily — this routine makes the check explicit and host-local.
+# Script is self-discovering + idempotent: no-op if already patched, re-finds the gate
+# (minified var names re-minify per build) and re-applies if a new version appeared.
+name: check-dev-channels-patch
+description: Daily idempotent re-apply of the Claude Code dev-channels dialog binary patch (survives CC auto-updates).
+tags:
+  - script
+  - infra
+schedule: "30 6 * * *"
+timeout_sec: 120
+max_active_runs: 1
+# HOME is host-specific and provided at the dagu PROCESS level
+# (agent-os-dagu.service) — NOT set here, so the routine stays portable.
+steps:
+  - name: ensure-patch
+    command: /usr/bin/python3 /opt/agent-os/claude/scripts/ensure-dev-channels-patch.py
+    working_dir: /opt/agent-os/claude
