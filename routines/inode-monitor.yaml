@@ -1,0 +1,24 @@
+# inode-monitor — guard the root FS against inode / disk exhaustion.
+#
+# Born from an incident: the root FS hit 100% INODES (0 free) while plenty of
+# bytes were still free, deadlocking the whole install with ENOSPC on every
+# file create. df -h looked healthy the entire time — df -i was
+# the only signal. This routine polls df -i (+ df bytes) and alerts via the
+# optional notify hook (AGENT_OS_NOTIFY_HOOK) when free inodes/bytes drop below
+# floor. Silent when healthy. Non-blocking (script always exits 0).
+#
+# Cadence: every 30 min — inode exhaustion can go from fine to fatal within an
+# hour when a runaway pipeline creates worktrees/node_modules.
+name: inode-monitor
+description: Poll df -i / df bytes on the root FS every 30 min; alert (via notify hook) on low free inodes or disk.
+tags:
+  - script
+  - infra
+  - monitoring
+schedule: "*/30 * * * *"
+timeout_sec: 120
+max_active_runs: 1
+steps:
+  - name: check-inodes
+    command: /bin/bash /opt/agent-os/claude/scripts/inode-monitor.sh
+    working_dir: /opt/agent-os/claude

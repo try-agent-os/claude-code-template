@@ -1,0 +1,27 @@
+# worktree-janitor — reap stale/merged per-workspace git worktrees.
+#
+# Root-cause fix for an inode-exhaustion incident: submodule dev pipelines
+# (start-feature / setup-worktree.sh) create a git worktree + node_modules per
+# feature under workspaces/<ws>/platform/.worktrees/ but have no teardown —
+# orphans accumulated over time and filled the root FS to 100% inodes. The
+# per-worker worktree GC (spawn-worker.sh) only covers the install's own
+# worker/<slug> worktrees, not these. This routine reaps any worktree whose
+# branch merged into origin/main OR whose dir is older than STALE_HOURS (24h),
+# then `git worktree prune`. Branch refs are kept (recoverable). It alerts
+# (via the notify hook) only on a large reap (>=10) — a signal the teardown gap
+# is firing.
+#
+# Cadence: every 6 h. A day-old worktree is safely dead; 4 sweeps/day keeps the
+# backlog from ever reaching danger between inode-monitor pings.
+name: worktree-janitor
+description: Every 6h reap stale/merged worktrees under workspaces/*/platform/.worktrees, then prune. Prevents inode exhaustion.
+tags:
+  - script
+  - infra
+schedule: "15 */6 * * *"
+timeout_sec: 600
+max_active_runs: 1
+steps:
+  - name: reap-worktrees
+    command: /bin/bash /opt/agent-os/claude/scripts/worktree-janitor.sh
+    working_dir: /opt/agent-os/claude
