@@ -26,9 +26,11 @@ jobs:
       - name: Lint agent scripts
         run: |
           shellcheck --severity=error \
-            agents/heartbeat/dispatcher.sh \
             agents/operator/start.sh \
-            scripts/verify.sh
+            scripts/verify.sh \
+            scripts/spawn-worker.sh \
+            scripts/worker-launcher-tick.sh \
+            scripts/worker-supervisor.sh
 
   json-validate:
     name: JSON validity (config templates + manifests)

@@ -20,11 +20,11 @@ If you are running from `agents/{role}/` — follow that role's `CLAUDE.md`. Thi
 |-------|------|-----------|-----------------|
 | **sysadmin** | Architecture, configs, debug, refactor | Manual (terminal) | direct user dialogue |
 | **operator** | User-facing interface | tmux persistent + channel push | Telegram |
-| **heartbeat** | Ephemeral dispatcher, launches workers | systemd timer / launchd, every N min | saga-mcp queue |
+| **heartbeat** | Worker spawn layer — token-free launcher tick + supervisor + daily strategist | Dagu routines (`agent-os-dagu.service`) | task backend queue |
 
 Each agent's role doc: `agents/{role}/CLAUDE.md`. Personality: `agents/{role}/SOUL.md`. MCP wiring: `agents/{role}/.mcp.json`.
 
-Workers are *temporary* tmux sessions spawned by heartbeat for individual tasks; they exit when their task is done, blocked, or times out.
+Workers are *temporary* interactive `claude` tmux sessions. The Dagu-scheduled `routines/workers.yaml` tick (token-free bash+Python, every 5 min) picks the top pickable `todo` from the task backend and spawns one worker via `scripts/spawn-worker.sh`; `routines/worker-supervisor.yaml` (every 1 min) keeps them healthy. A worker self-finalizes by calling `/done` or `/blocked`, which sets the task's terminal status, notifies the operator, and kills its own tmux session.
 
 ## MCP servers (default bundle)
 
@@ -68,9 +68,8 @@ Lifecycle: `todo → in_progress → done | blocked`. Workers update status on c
 agents/
   sysadmin/         CLAUDE.md, SOUL.md, .mcp.json, docs/
   operator/         CLAUDE.md, SOUL.md, .mcp.json, .claude/, start.sh
-  heartbeat/        CLAUDE.md, SOUL.md, .mcp.json, dispatcher.sh,
-                    worker-launcher.sh, worker-collector.sh,
-                    parse-stream.py, strategist.sh, hooks/, skills/
+  heartbeat/        CLAUDE.md, SOUL.md, .mcp.json,
+                    worker-prompt-template.md, strategist.sh, hooks/, skills/
   saga-dashboard/   server.js, index.html, start.sh, stop.sh
 memory/
   context.md, decisions.md, learnings.md,    # current state

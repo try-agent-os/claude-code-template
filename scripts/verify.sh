@@ -569,7 +569,7 @@ check_services_linux() {
   local any_loaded=0
   local u
   for u in agent-os-saga.service agent-os-operator.service \
-           agent-os-dispatcher.timer agent-os-dispatcher.service; do
+           agent-os-dagu.service; do
     if systemctl list-unit-files "$u" >/dev/null 2>&1 \
        && [ -n "$(systemctl show -p Id "$u" 2>/dev/null | grep -v '^Id=$')" ]; then
       any_loaded=1
@@ -601,13 +601,14 @@ check_services_linux() {
     fi
   fi
 
-  # dispatcher.timer
-  if systemctl list-unit-files agent-os-dispatcher.timer >/dev/null 2>&1; then
-    if systemctl is-enabled --quiet agent-os-dispatcher.timer 2>/dev/null; then
-      emit PASS "services" "agent-os-dispatcher.timer enabled"
+  # dagu (routines engine — drives the worker fleet: workers / worker-supervisor
+  # / strategist DAGs). Replaces the old dispatcher timer.
+  if systemctl list-unit-files agent-os-dagu.service >/dev/null 2>&1; then
+    if systemctl is-active --quiet agent-os-dagu.service 2>/dev/null; then
+      emit PASS "services" "agent-os-dagu.service active (worker fleet scheduler)"
     else
-      emit FAIL "services" "agent-os-dispatcher.timer NOT enabled" \
-        "systemctl enable --now agent-os-dispatcher.timer"
+      emit FAIL "services" "agent-os-dagu.service NOT active" \
+        "journalctl -u agent-os-dagu.service -n 50"
     fi
   fi
 }
@@ -620,7 +621,7 @@ check_services_macos() {
 
   # We don't know PROJECT_SLUG (substituted at install). Probe common names.
   local found=0 label
-  for label in $(launchctl list 2>/dev/null | awk '/\.(saga-mcp|claude-peers-broker|operator|heartbeat-dispatcher|telegram-mcp)$/ {print $3}'); do
+  for label in $(launchctl list 2>/dev/null | awk '/\.(saga-mcp|claude-peers-broker|operator|telegram-mcp)$/ {print $3}'); do
     found=1
     emit PASS "services" "launchd job loaded: $label"
   done

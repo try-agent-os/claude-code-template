@@ -2122,8 +2122,6 @@ render_unit() {
 
 for unit in agent-os-telegram-mcp.service \
             agent-os-whisper-server.service \
-            agent-os-dispatcher.service \
-            agent-os-dispatcher.timer \
             agent-os-operator.service \
             agent-os-operator-watchdog.service \
             agent-os-operator-watchdog.timer \
@@ -2441,7 +2439,10 @@ step "16/17 enable + start units"
 # also fails because telegram-mcp pushes channel notifications by iterating
 # `activeSessions` — a map populated only by SSE clients, not stdio. Operator
 # connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
-UNITS=(agent-os-telegram-mcp.service agent-os-dispatcher.timer)
+# Worker orchestration is driven by the Dagu routines engine (routines/workers.yaml
+# + worker-supervisor.yaml + strategist.yaml), enabled below — no separate
+# dispatcher timer. See docs/decisions/0001-scheduling-layer-dagu.md.
+UNITS=(agent-os-telegram-mcp.service)
 DEFERRED_UNITS=()
 
 # Dagu routines engine — independent of the operator/telegram plane, so it runs
@@ -2742,7 +2743,7 @@ cat <<EOF
 
   Verify:        sudo systemctl status 'agent-os-*'
 ${OPERATOR_LINE}
-  Dispatcher:    journalctl -u agent-os-dispatcher.service -f
+  Workers:       Dagu routines (workers / worker-supervisor / strategist) — journalctl -u agent-os-dagu.service -f
 
 ${LOGS_LINE}
 ========================================================================

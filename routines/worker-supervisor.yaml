@@ -1,0 +1,32 @@
+# worker-supervisor — ONE consolidated worker-supervision tick.
+#
+# Replaces the several overlapping watchers of the old model (wall-clock janitor,
+# progress watchdog, collector sweep, per-spawn startup-dialog guard) that split
+# kill-authority and could double-hit one session in a minute.
+#
+# Part A (per live worker session, strict priority): terminal-status no-op →
+# startup-dialog Enter → wall-cap state-flip → pane-stall escalate. One action
+# per session per tick (early continue) ⇒ single kill-authority, no double-kill.
+# Part B: orphan sweep — a task marked in_progress in the backend with no live
+# tmux session is requeued/flipped.
+#
+# Runs every minute to keep dialog/wall-cap responsiveness tight.
+name: worker-supervisor
+description: Consolidated worker supervision — terminal-noop, startup-dialog Enter, wall-cap state-flip, pane-stall kill, orphan requeue. One kill-authority. Runs every minute.
+tags:
+  - agent
+  - core
+schedule: "*/1 * * * *"
+timeout_sec: 60
+max_active_runs: 1
+env:
+  # HOME / TMUX_TMPDIR come from the Dagu PROCESS env (agent-os-dagu.service),
+  # host-specific — not set here (portability). REPO_ROOT is identical on every
+  # host, so it stays inline.
+  - REPO_ROOT: /opt/agent-os/claude
+  - WORKER_TIMEOUT_MIN: "45"
+  - SUPERVISOR_STALL_MIN: "5"
+steps:
+  - name: supervise
+    command: /bin/bash /opt/agent-os/claude/scripts/worker-supervisor.sh
+    working_dir: /opt/agent-os/claude

@@ -1,6 +1,6 @@
-# Dispatcher — Ephemeral Cron Agent
+# Heartbeat — Worker Spawn Layer
 
-You are the AgentOS ephemeral dispatcher. You are spawned every N minutes by launchd/cron, run one cycle, and exit.
+This directory backs the AgentOS worker spawn layer. There is **no LLM dispatcher**: worker orchestration is token-free (pure bash + Python) and scheduled by the **Dagu routines engine** (`agent-os-dagu.service`). This file is context for the strategist worker and for anyone editing the orchestration.
 
 Full project context: [`CLAUDE.md`](../../CLAUDE.md) (repo root).
 
@@ -10,36 +10,23 @@ Full project context: [`CLAUDE.md`](../../CLAUDE.md) (repo root).
 > - `{PROJECT_ID}` — project ID in saga-mcp
 > - Ports: `3851` (saga-mcp), `7899` (claude-peers broker) — defaults are aligned across all agents
 
-## Rules
+## Orchestration (token-free, Dagu-driven)
 
-- Don't ask permission — just do
-- ALWAYS launch sub-agents with `run_in_background: true`
-- You must finish within 30 seconds. Don't run heavy work yourself
-- Git: after changes — `git add`, `git commit`, `git push`
+Three DAGs under [`routines/`](../../routines/) run the lifecycle — none of them call an LLM to route or collect:
 
-## Algorithm (one cycle)
+1. `routines/workers.yaml` (every 5 min) → `scripts/worker-launcher-tick.sh`: picks the top pickable `todo` from the task backend, fills `worker-prompt-template.md`, spawns ONE interactive worker via `scripts/spawn-worker.sh`, marks the task `in_progress`.
+2. `routines/worker-supervisor.yaml` (every 1 min) → `scripts/worker-supervisor.sh`: one consolidated supervision tick (terminal-status no-op, startup-dialog Enter, wall-clock-cap state-flip, pane-stall kill, orphan-sweep — a task `in_progress` with no live tmux session gets requeued). Single kill-authority.
+3. `routines/strategist.yaml` (daily) → `strategist.sh`: spawns the strategist worker via `spawn-worker.sh`.
 
-1. Read the saga-mcp queue: `mcp__saga-mcp__task_list(status: "todo")` — pick the next N tasks by priority
-2. For each picked task:
-   - Choose `agent_type` based on routing (see below)
-   - Launch a worker as a background sub-agent (background subagent / external runtime / tmux — implementation is up to you)
-   - Mark the task as `in_progress` in saga-mcp
-3. Collect results from workers that finished since the last cycle (by status, log file, or peer notification)
-4. Forward results to the operator via `claude-peers` HTTP API or by updating saga-mcp
-5. Watchdog: detect crashed/zombie workers and either retry or mark the task as `blocked`
-6. Exit
+Workers self-report: each worker calls `/done` or `/blocked` to set its terminal status, notify the operator via claude-peers, and kill its own tmux session. There is no result-file polling and no stream-json parsing.
 
-## Agent Routing
+## Worker routing
 
-When launching a worker — determine `agent_type` based on keywords in the task title. The base template ships without specialized sub-agents: all workers run as generic. If your system gains specialized agents (researcher, outreacher, etc.) — add them to the `agents/` directory and wire up routing here.
-
-| Task type | agent_type | What is loaded |
-|-----------|-----------|----------------|
-| Anything | (empty) | Only the root CLAUDE.md |
+`worker-launcher-tick.sh` fills `worker-prompt-template.md` for the picked task. The base template ships without specialized sub-agents: all workers run as generic (only the root CLAUDE.md is loaded). If your system gains specialized agents (researcher, outreacher, etc.), add them under `agents/` and wire up routing in the tick.
 
 ## Skills Library (for workers)
 
-Each skill file under `skills/` has YAML frontmatter with a `read_when` field. While generating a worker prompt, the dispatcher matches the task text against every skill's `read_when` and attaches the relevant ones.
+Each skill file under `skills/` has YAML frontmatter with a `read_when` field. The worker matches the task text against every skill's `read_when` and reads the relevant ones.
 
 Bundled skills (12 generic): `self-improvement-loop`, `self-upgrade-scan`, `self-heal-{diagnose,autofix}`, `memory-search`, `event-correlation`, plus 6 strategist skills under `skills/strategist/` (`signal-analysis`, `blocker-resolution`, `business-analysis`, `self-improvement`, `worker-results-analysis`, `health-watchdog`).
 
@@ -61,8 +48,7 @@ Connectors are optional — workers use whichever ones are configured in your sy
 
 ## Anti-patterns (FORBIDDEN)
 
-- Doing the task yourself (except for health-checks / quick inline reminders)
-- Reading directories outside `{INSTALL_ROOT}` — that's worker territory
-- Running > 3 workers simultaneously
-- Spending > 30 seconds on a cycle
-- Doing deep analysis, research, or content
+- Adding an LLM back into the launcher/supervisor tick — orchestration is token-free by design
+- Giving anything other than the supervisor tick authority to kill workers (single kill-authority)
+- Polling result files or parsing stream-json — workers self-report via `/done` / `/blocked`
+- Launching more than one worker per launcher tick

@@ -35,7 +35,7 @@ You bring:
 You get:
 - An **operator agent** running 24/7 in a tmux session, listening for incoming Telegram messages and replying
 - A **task tracker** (saga-mcp) Claude can use to plan and persist work across sessions
-- A **heartbeat dispatcher** that fires every 45 minutes for scheduled / proactive work
+- A **Dagu routines engine** that drives worker orchestration — a token-free tick (`routines/workers.yaml`, every 5 min) launches one worker from the task backend, a supervisor tick (`routines/worker-supervisor.yaml`, every 1 min) keeps the fleet healthy
 - A **plugin marketplace** with claude-peers (inter-agent messaging) + telegram (bot bridge) + four vendored Anthropic plugins (commit-commands, code-review, security-guidance, agent-sdk-dev)
 - A **deploy pipeline** that's been beaten on, debugged, and shipped (15+ hard-won schema / config / unit fixes documented in [CHANGELOG.md](./CHANGELOG.md))
 
@@ -82,7 +82,7 @@ Pre-built example configurations live in [`examples/`](./examples/) (more landin
 
 Three tiers:
 
-1. **systemd / launchd** — long-lived supervision. `agent-os-operator.service` (claude in tmux), `agent-os-saga.service` (task tracker, SSE :3851), `agent-os-telegram-mcp.service` (bot bridge, SSE :3848), `agent-os-dispatcher.timer` (every 45 min).
+1. **systemd / launchd** — long-lived supervision. `agent-os-operator.service` (claude in tmux), `agent-os-saga.service` (task tracker, SSE :3851), `agent-os-telegram-mcp.service` (bot bridge, SSE :3848), `agent-os-dagu.service` (routines engine — schedules the worker-launcher, supervisor, and strategist DAGs).
 2. **Claude Code processes** — operator session runs `claude --dangerously-load-development-channels server:telegram server:claude-peers`, isolated by per-agent `CLAUDE_CONFIG_DIR`.
 3. **MCP layer** — telegram-mcp + saga-mcp speak HTTP/SSE; claude-peers + Anthropic plugins are stdio MCP plugins spawned per session.
 
@@ -166,7 +166,7 @@ Telegram is free. Claude Code is free; the runtime needs an Anthropic subscripti
 ├── cloud-init.yaml                  # one-click VPS bootstrap
 ├── agents/
 │   ├── operator/                    # Telegram-listening claude session
-│   ├── heartbeat/                   # dispatcher.sh — fires workers
+│   ├── heartbeat/                   # strategist.sh + worker prompt template
 │   └── strategist/                  # planning role
 ├── plugins/
 │   ├── claude-peers/                # stdio MCP — inter-agent messaging

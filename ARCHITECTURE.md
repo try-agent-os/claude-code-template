@@ -16,17 +16,17 @@ The whole stack is three concentric layers, each with a different lifetime:
 │   Long-lived processes. Survives reboot. Restart-on-failure.       │
 │   ─ agent-os-saga.service       (always-on, MCP HTTP broker)       │
 │   ─ agent-os-operator.service   (always-on, Claude Code in tmux)   │
-│   ─ agent-os-dispatcher.timer + .service  (oneshot, every 45 min)  │
+│   ─ agent-os-dagu.service       (always-on, routines/cron engine)  │
 └────────────────────────────────────────────────────────────────────┘
-                            │ spawns
+                            │ schedules routines
                             ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │ Tier 2 — Claude Code processes                                     │
 │   Started by Tier 3, owns its own session JSONL + plugin set.      │
 │   Each agent has its own CLAUDE_CONFIG_DIR for isolation.          │
 │   ─ operator session (interactive, --channels)                     │
-│   ─ dispatcher session (oneshot, headless)                         │
-│   ─ heartbeat session (forked by dispatcher.sh per cycle)          │
+│   ─ worker sessions (interactive, one tmux session per task,       │
+│       spawned by routines/workers.yaml via spawn-worker.sh)        │
 └────────────────────────────────────────────────────────────────────┘
                             │ stdio spawn / HTTP+SSE
                             ▼
@@ -51,7 +51,7 @@ flowchart TB
         saga[agent-os-saga.service<br/>node SSE :3851]
         tg[agent-os-telegram-mcp.service<br/>node SSE :3848]
         op[agent-os-operator.service<br/>tmux + claude]
-        disp[agent-os-dispatcher.timer<br/>every 45min]
+        disp[agent-os-dagu.service<br/>routines engine]
     end
 
     subgraph claude["Claude Code processes (Tier 2)"]
@@ -148,9 +148,9 @@ The two diagrams above are intentionally simplified for at-a-glance comprehensio
 │  │           │                                      │ (long-polling)   │ │     │
 │  │           │                                      └──────────────────┘ │     │
 │  │           │                                                           │     │
-│  │  agent-os-dispatcher.timer  ──fires──►  agent-os-dispatcher.service   │     │
-│  │  (OnUnitActiveSec=2700)                  Type=oneshot, runs           │     │
-│  │                                          dispatcher.sh ➜ exits        │     │
+│  │  agent-os-dagu.service  ──schedules──►  routines/*.yaml DAGs          │     │
+│  │  (always-on cron engine)                workers.yaml (5m) → worker    │     │
+│  │                                          supervisor.yaml (1m)         │     │
 │  └───────────────────────────────────────────────────────────────────────┘     │
 │                                                                                │
 │  /opt/agent-os/                            /var/lib/agent-os/                  │
@@ -248,7 +248,7 @@ A hub fork can use a fractal workspace model: each workspace is a folder `worksp
 - Future standalone AgentOS instance — when the workspace "graduates", the submodule becomes an independent AgentOS deployment on its own host.
 - Hub workers write into the submodule through a generic sync workflow:
   - Skills reference paths like `workspaces/<slug>/claude/...`.
-  - Dispatcher Step 7 (after the hub commit/push) iterates every `workspaces/*/claude/` submodule (excluding `workspaces/agent-os/claude` itself — the template) and calls `scripts/sync-workspace-submodule.sh <slug>`.
+  - The workspace-sync workflow (after a hub commit/push) iterates every `workspaces/*/claude/` submodule (excluding `workspaces/agent-os/claude` itself — the template) and calls `scripts/sync-workspace-submodule.sh <slug>`.
   - The script is idempotent: auto-commit + push in the submodule, then bump the pointer in the hub + push the hub. Push retries with exponential backoff.
 
 **Category B — Code repos** (`workspaces/<slug>/<repo>/` where `<repo>` != `claude`):
@@ -292,7 +292,7 @@ The official spec supports stdio AND HTTP/SSE channel transports. We ship **stdi
 
 ### Why operator gets `--channels` and others don't
 
-Channel push is opt-in per session via `--channels plugin:NAME@agentos`. Without that flag, the same plugin is a tools-only MCP server. Only the operator needs incoming pushes (it's the human-facing Telegram bridge); the dispatcher is one-shot and headless.
+Channel push is opt-in per session via `--channels plugin:NAME@agentos`. Without that flag, the same plugin is a tools-only MCP server. Only the operator needs incoming pushes (it's the human-facing Telegram bridge); worker sessions are task-scoped and finalize themselves via the `/done` / `/blocked` slash commands.
 
 The operator's systemd unit launches Claude Code with:
 
@@ -375,15 +375,14 @@ Templates live in [`systemd/`](./systemd/) and are rendered by `install.sh` (pla
 |------|------|---------|---------|
 | `agent-os-saga.service` | `simple` | Long-running task tracker MCP. | `always`, `RestartSec=5` |
 | `agent-os-operator.service` | `forking` | Wraps `tmux new-session -d` so Claude Code persists. `Type=forking` is required because `tmux -d` daemonises and the parent exits — with `Type=simple` systemd would mark the unit "exited" almost instantly. | `on-failure`, `RestartSec=30` |
-| `agent-os-dispatcher.service` | `oneshot` | Heartbeat dispatcher — runs `dispatcher.sh` to completion, exits. | n/a |
-| `agent-os-dispatcher.timer` | timer | `OnBootSec=2min`, `OnUnitActiveSec={DISPATCHER_INTERVAL_SEC}sec`. Measures interval since previous *activation* (not previous completion) — matches macOS `StartInterval` semantics. | n/a |
+| `agent-os-dagu.service` | `simple` | Routines (cron) engine — runs `dagu start-all` and fires every `routines/*.yaml` on its schedule, including the worker DAGs: `workers.yaml` (token-free launcher, every 5 min), `worker-supervisor.yaml` (supervision, every 1 min), `strategist.yaml` (daily). | `on-failure`, `RestartSec=5` |
 
 Hardening defaults applied to every unit:
 
 - `User=agent-os` / `Group=agent-os` — never root
 - `NoNewPrivileges=yes`
 - `ProtectSystem=strict`
-- `ProtectHome=read-only` (operator + dispatcher need `~/.claude` and `~/.config` written; those are explicitly listed in `ReadWritePaths`)
+- `ProtectHome=read-only` (operator + dagu/workers need `~/.claude` and `~/.config` written; those are explicitly listed in `ReadWritePaths`)
 - `PrivateTmp=yes`
 - `ReadWritePaths={STATE_DIR} {LOG_DIR} {INSTALL_ROOT}/claude {CLAUDE_CONFIG_DIR_*} {AGENT_HOME}/.config`
 
@@ -393,13 +392,13 @@ See [`systemd/README.md`](./systemd/README.md) for the full hardening rationale.
 
 The supported macOS workflow is **not** to run AgentOS as a long-running stack on the Mac. Instead, `install.sh` detects Darwin (via `detect_mode` — `uname == Darwin`) and dispatches to `exec_remote_setup_wizard`, which provisions/targets a Linux VPS and runs the canonical `install.sh` there over SSH. See [README.md → How it works on Mac](./README.md#how-it-works-on-mac) for the user-facing flow.
 
-[`launchd/`](./launchd/) still contains plist templates (with `${PROJECT_SLUG}` placeholders) for the same supervised processes — kept around for parity with the systemd units and for users who want to experiment with running operator/dispatcher on a Mac directly:
+[`launchd/`](./launchd/) still contains plist templates (with `${PROJECT_SLUG}` placeholders) for the same supervised processes — kept around for parity with the systemd units and for users who want to experiment with running the operator + routines engine on a Mac directly:
 
 | Plist | Job |
 |-------|-----|
 | `com.${PROJECT_SLUG}.saga-mcp.plist` | saga-mcp (`KeepAlive=true`) |
 | `com.${PROJECT_SLUG}.operator.plist` | Operator (`agents/operator/start.sh`, `KeepAlive.SuccessfulExit=false`) |
-| `com.${PROJECT_SLUG}.heartbeat-dispatcher.plist` | Heartbeat dispatcher (`StartInterval=2700`) |
+| `com.${PROJECT_SLUG}.heartbeat-dispatcher.plist` | **Stale** — assumes the removed LLM heartbeat dispatcher; worker orchestration is now the Dagu routines engine (`agent-os-dagu.service`). |
 | `com.${PROJECT_SLUG}.claude-peers-broker.plist` | **Stale** — assumes claude-peers is a separate broker, not the current stdio plugin. |
 | `com.${PROJECT_SLUG}.telegram-mcp.plist` | **Stale** — same reason. |
 
@@ -494,7 +493,7 @@ What changes when you pass `--minimal`:
 
 | Layer | Default | `--minimal` |
 |-------|---------|-------------|
-| systemd units | saga + dispatcher.timer + operator | saga + dispatcher.timer (no operator) |
+| systemd units | saga + dagu + operator | saga + dagu (no operator) |
 | Wizard prompts | Telegram bot token + user ID required | skipped |
 | `enabledPlugins` (managed) | All 6 | (intent: none, but the current managed-settings template still lists all 6 — install.sh does not yet rewrite the file based on `--minimal`) |
 | Channel plugins active | `--channels plugin:claude-peers@agentos plugin:telegram@agentos` | none (no operator, no `--channels` flag) |

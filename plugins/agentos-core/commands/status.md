@@ -6,10 +6,10 @@ allowed-tools: Bash(systemctl status*) Bash(systemctl is-active*) Bash(systemctl
 # AgentOS Status
 
 ## systemd units
-!`systemctl is-active agent-os-saga.service agent-os-operator.service agent-os-dispatcher.timer 2>&1`
+!`systemctl is-active agent-os-saga.service agent-os-operator.service agent-os-dagu.service 2>&1`
 
 ## Service status (last 3 lines each)
-!`for u in agent-os-saga agent-os-operator agent-os-dispatcher.timer; do echo "── $u ──"; systemctl status "$u" --no-pager -n 3 2>&1; done`
+!`for u in agent-os-saga agent-os-operator agent-os-dagu; do echo "── $u ──"; systemctl status "$u" --no-pager -n 3 2>&1; done`
 
 ## MCP health
 - claude-peers (:7899): !`curl -fsS http://127.0.0.1:7899/health 2>&1 | head -c 200 || echo "FAIL"`
@@ -21,8 +21,8 @@ allowed-tools: Bash(systemctl status*) Bash(systemctl is-active*) Bash(systemctl
 ## Peer registration
 !`curl -sf http://127.0.0.1:7899/list-peers -H 'Content-Type: application/json' -d '{"scope":"machine","cwd":"/","git_root":null}' 2>&1 | jq -r '.[] | "\(.id) \(.cwd)"' 2>&1 | head -10 || echo "broker unreachable"`
 
-## Dispatcher next fire
-!`systemctl list-timers agent-os-dispatcher.timer --no-pager 2>&1 | head -3`
+## Routines engine (worker DAGs)
+!`systemctl is-active agent-os-dagu.service 2>&1; journalctl -u agent-os-dagu -n 5 --no-pager 2>&1 | tail -5`
 
 ## Task
 

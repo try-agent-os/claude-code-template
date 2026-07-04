@@ -6,7 +6,7 @@ This is the fastest path from "I want to try this" to "my bot just replied to me
 
 - A long-running Claude Code agent (the **operator**) on a Linux VPS, listening for incoming Telegram messages and replying via the Anthropic API.
 - A persistent task tracker (saga-mcp) you can use from within the agent.
-- A heartbeat dispatcher that fires every 45 minutes for scheduled / proactive work.
+- A Dagu routines engine that drives worker orchestration (a token-free launcher tick every 5 min, a supervisor tick every 1 min, a daily strategist).
 - All four critical MCP servers ✔ connected (claude-peers, saga-mcp, telegram, plugin:claude-peers).
 
 ## Prerequisites (5 minutes to gather)
@@ -63,8 +63,7 @@ You should see:
 - `agent-os-saga.service` — task tracker (HTTP/SSE on :3851)
 - `agent-os-telegram-mcp.service` — Telegram bot bridge (HTTP/SSE on :3848)
 - `agent-os-operator.service` — the operator (Claude Code in a tmux session)
-- `agent-os-dispatcher.timer` — fires every 45 minutes
-- `agent-os-dispatcher.service` — oneshot dispatcher run (only active during a fire)
+- `agent-os-dagu.service` — routines engine that schedules the worker DAGs (`routines/workers.yaml` every 5 min, `routines/worker-supervisor.yaml` every 1 min, `routines/strategist.yaml` daily)
 
 To peek at what the operator is doing:
 
@@ -82,7 +81,7 @@ sudo nsenter -t "$(systemctl show -p MainPID --value agent-os-operator.service)"
 
 - **Customise the operator's behaviour** — edit `/opt/agent-os/claude/agents/operator/CLAUDE.md` on the droplet (or fork the template and edit there) to give the operator a project-specific persona.
 - **Add admins** — `sqlite3 /opt/agent-os/claude/plugins/telegram/messages.db "UPDATE users SET status='allowed' WHERE user_id=<chat_id>"` after they `/start` the bot.
-- **Schedule recurring tasks** — heartbeat dispatcher reads from saga-mcp's task list and runs todos in priority order. Create a task with `mcp__saga-mcp__task_create` from the operator session.
+- **Schedule recurring tasks** — the `routines/workers.yaml` tick (every 5 min, token-free bash+Python) picks the top pickable `todo` from the task backend and spawns one worker. Create a task with `mcp__saga-mcp__task_create` from the operator session.
 - **Read the architecture** — [ARCHITECTURE.md](./ARCHITECTURE.md) explains the 3-tier process model, channel push design, and why we ended up with the architecture we did.
 
 ## Help / something broke

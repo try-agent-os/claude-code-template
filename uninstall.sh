@@ -70,14 +70,17 @@ if [[ "$RESET_STATE_ONLY" == 1 ]]; then
 fi
 
 UNITS=(
-  agent-os-dispatcher.timer
-  agent-os-dispatcher.service
+  agent-os-dagu.service
+  agent-os-dagu-watchdog.service
+  agent-os-dagu-watchdog.timer
   agent-os-operator.service
   agent-os-saga.service
   agent-os-telegram-mcp.service
 )
-# Legacy units (pre-plugin-migration). Kept here for cleanup on upgrade.
+# Legacy units (pre-plugin-migration / pre-Dagu). Kept here for cleanup on upgrade.
 LEGACY_UNITS=(
+  agent-os-dispatcher.timer
+  agent-os-dispatcher.service
   agent-os-telegram.service
   agent-os-claude-peers.service
 )

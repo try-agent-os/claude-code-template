@@ -5,7 +5,7 @@ allowed-tools: Bash(scripts/verify.sh*) Bash(/opt/agent-os/*) Bash(systemctl*) B
 
 # AgentOS Verify
 
-!`if [ -x /opt/agent-os/claude/scripts/verify.sh ]; then bash /opt/agent-os/claude/scripts/verify.sh 2>&1 | head -80; else echo "verify.sh not found at /opt/agent-os/claude/scripts/verify.sh — falling back to inline checks"; echo "── systemd ──"; systemctl is-active agent-os-saga agent-os-operator agent-os-dispatcher.timer 2>&1; echo "── claude-peers (:7899) ──"; curl -fsS http://127.0.0.1:7899/health 2>&1 | head -c 200 || echo "FAIL"; echo "── saga-mcp (:3851) ──"; curl -fsS http://localhost:3851/health 2>&1 | head -c 200 || echo "FAIL"; fi`
+!`if [ -x /opt/agent-os/claude/scripts/verify.sh ]; then bash /opt/agent-os/claude/scripts/verify.sh 2>&1 | head -80; else echo "verify.sh not found at /opt/agent-os/claude/scripts/verify.sh — falling back to inline checks"; echo "── systemd ──"; systemctl is-active agent-os-saga agent-os-operator agent-os-dagu 2>&1; echo "── claude-peers (:7899) ──"; curl -fsS http://127.0.0.1:7899/health 2>&1 | head -c 200 || echo "FAIL"; echo "── saga-mcp (:3851) ──"; curl -fsS http://localhost:3851/health 2>&1 | head -c 200 || echo "FAIL"; fi`
 
 ## Task
 

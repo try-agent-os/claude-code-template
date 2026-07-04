@@ -10,14 +10,14 @@ allowed-tools: Bash(systemctl restart*) Bash(systemctl is-active*) Bash(sudo sys
 Service to restart: $0 (default: all)
 
 Currently running:
-!`systemctl is-active agent-os-saga agent-os-operator agent-os-dispatcher.timer 2>&1`
+!`systemctl is-active agent-os-saga agent-os-operator agent-os-dagu 2>&1`
 
 ## Task
 
 If $0 is empty or "all", restart all 3 systemd units in correct order:
 1. agent-os-saga.service (broker first — saga-mcp tracker daemon)
 2. agent-os-operator.service (depends on saga; will respawn the tmux session and re-register peer)
-3. agent-os-dispatcher.timer (re-arm the heartbeat schedule)
+3. agent-os-dagu.service (routines engine — restarts the worker DAG scheduler)
 
 Use `sudo systemctl restart <unit>` for each. Wait 2 seconds between, verify is-active after each.
 

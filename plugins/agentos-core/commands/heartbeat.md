@@ -1,16 +1,16 @@
 ---
-description: Show heartbeat dispatcher recent activity (last 5 cycles)
+description: Show Dagu routines engine recent worker activity (last DAG runs)
 allowed-tools: Bash(systemctl*) Bash(journalctl*) Bash(ls:*) Bash(cat:*)
 ---
 
 # AgentOS Heartbeat
 
-Dispatcher next scheduled fire:
-!`systemctl list-timers agent-os-dispatcher.timer --no-pager 2>&1 | head -5`
+Routines engine status:
+!`systemctl status agent-os-dagu --no-pager -n 5 2>&1 | head -10`
 
-Last 5 dispatcher runs:
-!`journalctl -u agent-os-dispatcher.service -n 30 --no-pager 2>&1 | tail -30`
+Recent routines-engine output (worker launcher / supervisor / strategist DAGs):
+!`journalctl -u agent-os-dagu -n 40 --no-pager 2>&1 | tail -40`
 
 ## Task
 
-Show user when the dispatcher last ran, when next fire is, and any errors in the last 5 cycles. If dispatcher hasn't run in > 2× the configured interval, suggest `/agentos:restart dispatcher.timer` to re-arm.
+Show the user whether the Dagu routines engine (`agent-os-dagu.service`) is active and what the worker DAGs have been doing recently — `routines/workers.yaml` (launcher, every 5 min), `routines/worker-supervisor.yaml` (supervision, every 1 min), `routines/strategist.yaml` (daily). If `agent-os-dagu` is inactive/failed, suggest `/agentos:restart agent-os-dagu` to bring the worker orchestration back.

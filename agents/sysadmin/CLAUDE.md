@@ -76,7 +76,7 @@ When you receive the first user message — assemble the picture:
    **tmux sessions:**
    - `operator` — Telegram interface (channel push from telegram-mcp and claude-peers)
    - `caffeinate` — anti-sleep (mac only)
-   - heartbeat = launchd / systemd timer (dispatcher.sh every N min), NOT a tmux session
+   - heartbeat = the Dagu routines engine (`agent-os-dagu.service`) firing the worker DAGs, NOT a tmux session; individual workers ARE tmux sessions (`worker-<slug>`)
 
    **Peers** (operator must be registered):
    ```bash
@@ -92,13 +92,12 @@ When you receive the first user message — assemble the picture:
    launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.claude-peers-broker.plist
    launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.saga-mcp.plist
    launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.telegram-mcp.plist        # optional
-   launchctl load ~/Library/LaunchAgents/com.{PROJECT_SLUG}.heartbeat-dispatcher.plist
    tmux new-session -d -s caffeinate 'caffeinate -d'
 
    # Linux systemd
    systemctl --user start agent-os-claude-peers agent-os-saga
    systemctl --user start agent-os-telegram        # optional
-   systemctl --user start agent-os-dispatcher.timer
+   systemctl --user start agent-os-dagu            # routines engine (worker DAGs)
 
    # Cleanup stale worker tmux sessions (don't delete logs/workers/ — results live there)
    tmux ls 2>/dev/null | grep '^worker-' | cut -d: -f1 | xargs -I{} tmux kill-session -t {} 2>/dev/null || true
@@ -139,7 +138,7 @@ Each agent = a folder `agents/{name}/`:
 1. Read the agent's CLAUDE.md to confirm fit
 2. Create a saga-mcp task: `mcp__saga-mcp__task_create(epic_id, title, description, priority)`
    - Default epic IDs (resolve via `memory/epic-map.json`): Default, Research, Business, Infra, Scheduled
-3. The heartbeat dispatcher picks it up from saga-mcp and launches a worker
+3. The `routines/workers.yaml` tick (every 5 min, token-free) picks it up from the task backend and spawns a worker
 
 ## Documentation
 

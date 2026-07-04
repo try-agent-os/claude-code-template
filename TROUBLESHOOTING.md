@@ -11,7 +11,7 @@ Systemd units installed by `install.sh`:
 | `agent-os-operator.service` | Long-lived `claude` session in tmux, listens for Telegram via channel push | n/a (stdio + SSE clients to MCPs) |
 | `agent-os-saga.service` | Task tracker MCP (HTTP/SSE) | 3851 |
 | `agent-os-telegram-mcp.service` | Bot bridge MCP (HTTP/SSE), single Telegram getUpdates poller | 3848 |
-| `agent-os-dispatcher.timer` | Heartbeat — fires `dispatcher.sh` every 45 min for scheduled work | n/a |
+| `agent-os-dagu.service` | Routines (cron) engine — schedules the worker DAGs: `routines/workers.yaml` (launcher, every 5 min), `routines/worker-supervisor.yaml` (supervision, every 1 min), `routines/strategist.yaml` (daily) | 8080 (web UI, loopback) |
 
 **There is NO `agent-os-claude-peers.service`.** claude-peers is a stdio-MCP plugin spawned per claude session via `.claude.json mcpServers`. If you're hunting peers logs, look at the operator's claude session output (`tmux attach -t operator`), not systemd. Peer messages are delivered via the operator's MCP `notifications/claude/channel` push, not via a separate broker process.
 
@@ -159,7 +159,7 @@ Yes. The channel-push gate that blocks `plugin:` channels is enterprise-only —
 /var/log/agent-os/operator-errors.log       # operator stderr
 /var/log/agent-os/telegram-mcp.log          # bot polling, incoming msgs
 /var/log/agent-os/saga-mcp.log              # task tracker
-/var/log/agent-os/dispatcher.log            # heartbeat dispatcher
+/var/lib/agent-os/dagu/logs                 # Dagu routines engine — per-DAG run logs (workers, supervisor, strategist)
 journalctl -u agent-os-operator.service     # systemd unit log
 ```
 

@@ -14,8 +14,6 @@ The macOS counterparts live in [`../launchd/`](../launchd/).
 |------|------|---------|---------|
 | `agent-os-saga.service` | `simple` | Long-running task tracker MCP (`node dist/index.js`) on `127.0.0.1:3851`. | `always`, `RestartSec=5` |
 | `agent-os-operator.service` | `forking` | Wraps `tmux new-session -d -s operator … claude …` so Claude Code stays alive in a detached tmux session. | `on-failure`, `RestartSec=30` |
-| `agent-os-dispatcher.service` | `oneshot` | Heartbeat dispatcher — runs `dispatcher.sh` to completion, then exits. Triggered by `agent-os-dispatcher.timer`. | n/a |
-| `agent-os-dispatcher.timer` | timer | Fires `agent-os-dispatcher.service` periodically. `OnBootSec=2min`, `OnUnitActiveSec={DISPATCHER_INTERVAL_SEC}sec`. | n/a |
 | `agent-os-operator-watchdog.service` | `oneshot` | Restarts the operator when it stops answering incoming Telegram messages (`scripts/operator-watchdog.sh`). Triggered by its `.timer`. | n/a |
 | `agent-os-operator-watchdog.timer` | timer | Fires the operator watchdog. `OnBootSec=2min`, `OnUnitActiveSec=5min`, `Persistent=true`. | n/a |
 | `agent-os-operator-liveness.service` | `oneshot` | Layer-B watchdog for HARD operator death — tmux session gone / `claude` process gone / unit inactive (`scripts/operator-liveness-watchdog.sh`). Complements the soft-hang `operator-watchdog`; recovers within ~60s. All behavior is env-overridable (`OPERATOR_SERVICE`, `OPERATOR_TMUX_SESSION`, …) so the same script can drive per-instance operator watchdogs. | n/a |
@@ -30,6 +28,13 @@ The macOS counterparts live in [`../launchd/`](../launchd/).
   `server.ts` on first plugin spawn.
 - `agent-os-telegram.service` — telegram is now a stdio MCP plugin
   (`plugins/telegram`), spawned per session by Claude Code itself.
+
+**Removed in the worker-migration (LLM dispatcher → Dagu routines):**
+- `agent-os-dispatcher.service` / `agent-os-dispatcher.timer` — the LLM
+  heartbeat dispatcher is gone. Worker orchestration is now token-free and
+  driven by `agent-os-dagu.service` firing three DAGs: `routines/workers.yaml`
+  (launcher, every 5 min), `routines/worker-supervisor.yaml` (supervision,
+  every 1 min), and `routines/strategist.yaml` (daily).
 
 ---
 
@@ -47,7 +52,6 @@ unit files into `/etc/systemd/system/`:
 | `{AGENT_HOME}` | `/home/agent-os` | Home dir of the agent user. Holds `~/.bun/`, `~/.claude/`, etc. |
 | `{ENV_FILE}` | `/etc/agent-os/agent-os.env` | Single source of secrets. Mode `0640`, owner `root:agent-os`. |
 | `{BUN_PATH}` | `/home/agent-os/.bun/bin/bun` | Absolute path to `bun` (only `claude-peers-mcp` needs it). |
-| `{DISPATCHER_INTERVAL_SEC}` | `2700` | Seconds between dispatcher firings (45 min default). |
 | `{CLAUDE_CONFIG_DIR_OPERATOR}` / `{CLAUDE_CONFIG_DIR_DISPATCHER}` / `{CLAUDE_CONFIG_DIR_HEARTBEAT}` | `/var/lib/agent-os/claude-config/<role>/` | Per-agent config dir (one per role: operator, dispatcher, heartbeat), prevents a race on shared `~/.claude.json` files. `agent-os-dagu.service` uses the `heartbeat` dir. |
 
 ---
@@ -69,7 +73,6 @@ for f in systemd/agent-os-*.service systemd/agent-os-*.timer; do
     -e 's|{AGENT_HOME}|/home/agent-os|g' \
     -e 's|{ENV_FILE}|/etc/agent-os/agent-os.env|g' \
     -e 's|{BUN_PATH}|/home/agent-os/.bun/bin/bun|g' \
-    -e 's|{DISPATCHER_INTERVAL_SEC}|2700|g' \
     "$f" > "/tmp/agent-os-units/$(basename "$f")"
 done
 
@@ -82,7 +85,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now \
   agent-os-saga.service \
   agent-os-operator.service \
-  agent-os-dispatcher.timer
+  agent-os-dagu.service
 ```
 
 To inspect or tail logs:
@@ -90,7 +93,7 @@ To inspect or tail logs:
 ```bash
 sudo systemctl status agent-os-* --no-pager
 sudo journalctl -u agent-os-operator -f
-tail -f /var/log/agent-os/dispatcher.log
+sudo journalctl -u agent-os-dagu -f          # routines engine (worker DAGs)
 ```
 
 To attach to the operator tmux session for interactive debugging:
@@ -116,7 +119,7 @@ Per-directive notes:
   except for `/dev`, `/proc`, `/sys`, and explicit `ReadWritePaths`. Any write
   outside the allowlist (e.g. accidental `/etc` modification) fails.
 - **`ProtectHome=read-only`** — `/home`, `/root`, `/run/user` are read-only.
-  This blocks tampering with other users' homes. Operator and dispatcher need
+  This blocks tampering with other users' homes. Operator and dagu/workers need
   write access to `/home/agent-os/.claude` (Claude session state) and
   `/home/agent-os/.config` (mcp/tmux state) — those are explicitly re-added
   via `ReadWritePaths`.
@@ -125,20 +128,23 @@ Per-directive notes:
 - **`ReadWritePaths=…`** — minimum write surface per role:
   - Long-running MCPs (claude-peers, saga, telegram): `{STATE_DIR}`,
     `{LOG_DIR}`. They only need to write databases and logs.
-  - Operator + dispatcher: additionally need `{INSTALL_ROOT}/claude` (memory
-    writes from Claude sessions), `{AGENT_HOME}/.claude` (session state /
-    credentials), `{AGENT_HOME}/.config` (MCP per-server state, tmux). These
-    are workers — they need broader write access.
+  - Operator + dagu (which spawns workers): additionally need
+    `{INSTALL_ROOT}/claude` (memory writes from Claude sessions),
+    `{AGENT_HOME}/.claude` (session state / credentials), `{AGENT_HOME}/.config`
+    (MCP per-server state, tmux). Workers need broader write access.
 - **`StandardOutput=append:…` / `StandardError=append:…`** — redirect to flat
   files in `{LOG_DIR}` so `tail -f` works without journalctl. journald still
   captures the same stream for `journalctl -u <unit>`.
 - **`After=network-online.target` / `Wants=network-online.target`** —
   long-running units that need outbound HTTPS (Claude API, Telegram API) wait
   for the network to be fully online, not just the link.
-- **`After=agent-os-saga.service`** on the dispatcher — workers need
-  saga-mcp alive before firing, otherwise `mcp__saga-mcp__*` calls fail.
-  claude-peers needs no `After=` since it is a stdio MCP plugin spawned
-  in-process by Claude Code itself.
+- **`agent-os-dagu.service` has no `After=` on the task backend** — the
+  token-free launcher tick reaches the task backend over plain HTTPS (the
+  ClickUp REST API is the reference backend), so it only needs the network
+  (`After=network-online.target`), not a local MCP daemon. claude-peers likewise
+  needs no `After=` since it is a stdio MCP plugin spawned in-process by Claude
+  Code itself. A worker whose tick finds the backend unreachable is a no-op that
+  retries next tick (see `scripts/worker-preflight.sh`).
 
 ### Why `ProtectHome=read-only` instead of `tmpfs`
 
@@ -185,14 +191,15 @@ With those entries managed-settings sees the plugins as pre-approved, so
 Plugins must be installed and enabled at user scope (or shipped via the
 `agentos` marketplace bundled in this template).
 
-### Why `Type=oneshot` for the dispatcher
+### Why `Type=simple` for the routines engine
 
-The dispatcher script runs Claude Code workers, completes work, and exits.
-`Type=oneshot` makes systemd consider the unit "active (exited)" after a
-successful run — exactly what `agent-os-dispatcher.timer` needs to schedule
-the next firing. `OnUnitActiveSec=` measures from the previous *activation*,
-matching the macOS `StartInterval` semantics (interval since previous start,
-not since previous end).
+`agent-os-dagu.service` is a long-running scheduler (`dagu start-all`), so it is
+`Type=simple` with `Restart=on-failure`. It stays up and fires the worker DAGs
+on their own cron schedules (`routines/workers.yaml` every 5 min,
+`routines/worker-supervisor.yaml` every 1 min, `routines/strategist.yaml`
+daily) — there is no per-tick systemd unit and no LLM dispatcher to schedule.
+The token-free launcher tick spawns one worker per fire; each worker runs in
+its own detached tmux session and self-finalizes via `/done` / `/blocked`.
 
 ---
 
@@ -203,10 +210,10 @@ For ad-hoc inspection:
 
 ```bash
 # All units active?
-systemctl is-active agent-os-saga agent-os-operator agent-os-dispatcher.timer
+systemctl is-active agent-os-saga agent-os-operator agent-os-dagu
 
-# Next dispatcher run?
-systemctl list-timers agent-os-dispatcher.timer --no-pager
+# Next worker DAG runs? (Dagu scheduler, not systemd timers)
+systemctl status agent-os-dagu --no-pager -n 5
 
 # HTTP endpoints up?
 curl -sf http://127.0.0.1:3851/health   # saga-mcp

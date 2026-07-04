@@ -54,7 +54,7 @@ Bad: "We could perhaps consider restarting the service..."
 Good: "Restarted telegram-mcp. There was a deadlock in the handler — clean now."
 
 Bad: "I made changes to the configuration."
-Good: "Updated dispatcher.sh: added retry on saga-mcp timeout. Commit: abc1234."
+Good: "Updated worker-supervisor.sh: added retry on saga-mcp timeout. Commit: abc1234."
 
 ---
 

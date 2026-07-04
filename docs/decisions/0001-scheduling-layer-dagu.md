@@ -34,6 +34,8 @@ Adopt [**Dagu**](https://github.com/dagu-org/dagu) as the scheduling layer for A
 
 Dagu won on every decision driver above without a runner-up close enough to be worth a hybrid: it's a single statically-linked Go binary (~20 MB), file-based storage by default, declarative YAML, web UI on `:8080`, DAG with per-step retry/timeout, `overlap_policy: skip|latest|all`, `catchup_window`, and a trigger surface that covers cron + webhook + manual + API + GitHub events.
 
+> **Update (worker-orchestration migration):** the LLM heartbeat dispatcher referenced in the Context above has since been removed. Worker orchestration now also runs on Dagu, token-free: `routines/workers.yaml` (launcher, every 5 min) → `scripts/worker-launcher-tick.sh`, `routines/worker-supervisor.yaml` (supervision, every 1 min) → `scripts/worker-supervisor.sh`, and `routines/strategist.yaml` (daily). No `claude -p` per-tick dispatcher remains; the "one scheduler" outcome of this ADR now covers worker spawn/supervision as well.
+
 ## Alternatives considered
 
 The research pass that preceded this decision covered four categories of tools. The full per-tool footprint and tradeoffs:
