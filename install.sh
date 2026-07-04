@@ -2050,6 +2050,50 @@ fi
 mark_step_completed 9
 
 ###############################################################################
+# Step 9.5 — dagu binary (routines / cron scheduling engine)
+#
+# Dagu is the local scheduler that fires every routines/*.yaml on its cron
+# schedule (agent-os-dagu.service). See docs/decisions/0001-scheduling-layer-dagu.md.
+# We install the static binary to /usr/local/bin/dagu and create its state dirs.
+# Idempotent: skips download when the requested version is already present.
+###############################################################################
+step "9.5/17 dagu binary"
+
+DAGU_VERSION="${DAGU_VERSION:-2.7.3}"
+DAGU_BIN="/usr/local/bin/dagu"
+
+if [[ -x "$DAGU_BIN" ]] && "$DAGU_BIN" version 2>/dev/null | grep -q "$DAGU_VERSION"; then
+  log "  dagu ${DAGU_VERSION} already installed at ${DAGU_BIN}"
+else
+  DAGU_ARCH="$(uname -m)"
+  case "$DAGU_ARCH" in
+    x86_64) DAGU_ARCH=amd64 ;;
+    aarch64|arm64) DAGU_ARCH=arm64 ;;
+    *) warn "  unsupported arch '$DAGU_ARCH' for dagu — skipping binary install"; DAGU_ARCH="" ;;
+  esac
+  if [[ -n "$DAGU_ARCH" ]]; then
+    DAGU_URL="https://github.com/dagu-org/dagu/releases/download/v${DAGU_VERSION}/dagu_${DAGU_VERSION}_linux_${DAGU_ARCH}.tar.gz"
+    log "  downloading dagu ${DAGU_VERSION} (${DAGU_ARCH})"
+    if curl -fsSL "$DAGU_URL" | tar -xz -C /tmp dagu 2>/dev/null && [[ -f /tmp/dagu ]]; then
+      install -m 0755 /tmp/dagu "$DAGU_BIN"
+      rm -f /tmp/dagu
+      log "  installed $("$DAGU_BIN" version 2>/dev/null || echo dagu) -> ${DAGU_BIN}"
+    else
+      warn "  dagu download failed ($DAGU_URL) — routines engine will be unavailable until installed manually"
+    fi
+  fi
+fi
+
+# Dagu state dirs (data + logs + working dir). Owned by the agent user so the
+# service (User={AGENT_USER}) can write its journal and run logs.
+install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0750 \
+  "${STATE_DIR}/dagu" "${STATE_DIR}/dagu/data" "${STATE_DIR}/dagu/logs"
+# routines/ ships in the repo; ensure it exists even on a shallow/edited clone
+# so DAGU_DAGS_DIR resolves and the scheduler starts cleanly.
+install -d -o "$AGENT_USER" -g "$AGENT_USER" -m 0755 "${INSTALL_ROOT}/claude/routines"
+mark_step_completed 95
+
+###############################################################################
 # Step 10 — render systemd unit templates
 ###############################################################################
 step "10/17 render systemd units"
@@ -2085,6 +2129,7 @@ for unit in agent-os-telegram-mcp.service \
             agent-os-operator-watchdog.timer \
             agent-os-operator-liveness.service \
             agent-os-operator-liveness.timer \
+            agent-os-dagu.service \
             agent-os-dagu-watchdog.service \
             agent-os-dagu-watchdog.timer ; do
   src="${TEMPLATE_DIR}/systemd/${unit}"
@@ -2398,6 +2443,16 @@ step "16/17 enable + start units"
 # connects to telegram-mcp via SSE (project .mcp.json mcpServers entry).
 UNITS=(agent-os-telegram-mcp.service agent-os-dispatcher.timer)
 DEFERRED_UNITS=()
+
+# Dagu routines engine — independent of the operator/telegram plane, so it runs
+# even under --minimal. Enable the scheduler + its out-of-band watchdog only
+# when the dagu binary actually got installed (Step 9.5); otherwise leave the
+# units rendered-but-disabled so `systemctl enable` doesn't fail the install.
+if [[ -x /usr/local/bin/dagu ]]; then
+  UNITS+=(agent-os-dagu.service agent-os-dagu-watchdog.timer)
+else
+  log "  dagu binary absent — skipping agent-os-dagu.service enable (units rendered; install dagu then 'systemctl enable --now agent-os-dagu.service agent-os-dagu-watchdog.timer')"
+fi
 if [[ "${MINIMAL}" == 0 ]]; then
   if [[ "${DEFER_LOGIN:-0}" == 1 ]]; then
     # operator can't start without OAuth credentials — keep it enabled (so it
@@ -2415,15 +2470,6 @@ if [[ "${MINIMAL}" == 0 ]]; then
     UNITS+=(agent-os-whisper-server.service)
   else
     warn "  whisper-server binary or model missing — skipping unit enable"
-  fi
-  # dagu-watchdog only when a Dagu scheduler unit exists on this host
-  # (deployments that adopted the Dagu routines layer, see
-  # docs/decisions/0001-scheduling-layer-dagu.md). Out-of-band restart of a
-  # hung-but-alive scheduler; harmless no-op otherwise, so just skip.
-  if systemctl list-unit-files agent-os-dagu.service 2>/dev/null | grep -q agent-os-dagu.service; then
-    UNITS+=(agent-os-dagu-watchdog.timer)
-  else
-    log "  agent-os-dagu.service not installed — skipping dagu-watchdog.timer enable (rendered, enable later if you adopt Dagu)"
   fi
 fi
 

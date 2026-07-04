@@ -20,7 +20,8 @@ The macOS counterparts live in [`../launchd/`](../launchd/).
 | `agent-os-operator-watchdog.timer` | timer | Fires the operator watchdog. `OnBootSec=2min`, `OnUnitActiveSec=5min`, `Persistent=true`. | n/a |
 | `agent-os-operator-liveness.service` | `oneshot` | Layer-B watchdog for HARD operator death — tmux session gone / `claude` process gone / unit inactive (`scripts/operator-liveness-watchdog.sh`). Complements the soft-hang `operator-watchdog`; recovers within ~60s. All behavior is env-overridable (`OPERATOR_SERVICE`, `OPERATOR_TMUX_SESSION`, …) so the same script can drive per-instance operator watchdogs. | n/a |
 | `agent-os-operator-liveness.timer` | timer | Fires the liveness watchdog. `OnBootSec=1min`, `OnUnitActiveSec=1min`, `AccuracySec=5s`, `Persistent=true`. | n/a |
-| `agent-os-dagu-watchdog.service` | `oneshot` | Out-of-band watchdog for the Dagu scheduler (`scripts/dagu-watchdog.sh`): restarts `agent-os-dagu.service` when its proof-of-life heartbeat file goes stale >15 min. Only enabled when a Dagu unit exists (see script header for the heartbeat DAG setup). | n/a |
+| `agent-os-dagu.service` | `simple` | Dagu — the local routines (cron) engine. Runs `dagu start-all` (scheduler + web UI on `127.0.0.1:8080` + coordinator), firing every `routines/*.yaml` on its schedule. Installed + enabled by `install.sh` (binary in Step 9.5); runs even under `--minimal`. | `on-failure`, `RestartSec=5` |
+| `agent-os-dagu-watchdog.service` | `oneshot` | Out-of-band watchdog for the Dagu scheduler (`scripts/dagu-watchdog.sh`): restarts `agent-os-dagu.service` when its proof-of-life heartbeat file (written by `routines/dagu-heartbeat.yaml`) goes stale >15 min. | n/a |
 | `agent-os-dagu-watchdog.timer` | timer | Fires the Dagu watchdog. `OnBootSec=5min`, `OnUnitActiveSec=10min`, `Persistent=true`. | n/a |
 
 **Removed in T06-amend (plugin migration):**
@@ -47,7 +48,7 @@ unit files into `/etc/systemd/system/`:
 | `{ENV_FILE}` | `/etc/agent-os/agent-os.env` | Single source of secrets. Mode `0640`, owner `root:agent-os`. |
 | `{BUN_PATH}` | `/home/agent-os/.bun/bin/bun` | Absolute path to `bun` (only `claude-peers-mcp` needs it). |
 | `{DISPATCHER_INTERVAL_SEC}` | `2700` | Seconds between dispatcher firings (45 min default). |
-| `{CLAUDE_CONFIG_DIR}` | `/var/lib/agent-os/claude-config/<role>/` | Per-agent config dir (typically `/var/lib/agent-os/claude-config/<role>/`), prevents race on shared `~/.claude.json` files. |
+| `{CLAUDE_CONFIG_DIR_OPERATOR}` / `{CLAUDE_CONFIG_DIR_DISPATCHER}` / `{CLAUDE_CONFIG_DIR_HEARTBEAT}` | `/var/lib/agent-os/claude-config/<role>/` | Per-agent config dir (one per role: operator, dispatcher, heartbeat), prevents a race on shared `~/.claude.json` files. `agent-os-dagu.service` uses the `heartbeat` dir. |
 
 ---
 

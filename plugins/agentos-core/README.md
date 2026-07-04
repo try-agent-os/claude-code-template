@@ -2,7 +2,13 @@
 
 Slash commands for managing an AgentOS instance from any Claude Code session running on the host (or via SSH).
 
-This is a meta-plugin: it doesn't ship any agents/skills/MCP servers — it provides operational `/agentos:*` commands that wrap `systemctl`, `journalctl`, `curl` health probes, and `tmux` checks for the AgentOS infrastructure managed by the systemd units shipped in `systemd/agent-os-*.service`.
+This is a meta-plugin: it ships operational `/agentos:*` commands that wrap `systemctl`, `journalctl`, `curl` health probes, and `tmux` checks for the AgentOS infrastructure managed by the systemd units shipped in `systemd/agent-os-*.service`, plus a `dagu` skill for driving the routines (cron) engine. No agents or MCP servers.
+
+## Skills
+
+| Skill | What it does |
+|---|---|
+| `dagu` | Full CLI control over the Dagu routines engine (`agent-os-dagu.service`): start/stop/retry DAG runs, view status/history, validate `routines/*.yaml` before deploy, list genuine (recent) failures. |
 
 ## Commands
 

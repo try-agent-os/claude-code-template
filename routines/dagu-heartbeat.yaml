@@ -1,0 +1,20 @@
+# dagu-heartbeat — proof-of-life for the Dagu scheduler subsystem.
+#
+# Writes a timestamp every 5 min to /var/lib/agent-os/dagu-heartbeat.log.
+# The out-of-band OS watchdog (scripts/dagu-watchdog.sh, fired by
+# agent-os-dagu-watchdog.timer) checks this file and restarts
+# agent-os-dagu.service if it goes stale > 15 min.
+#
+# This DAG being silent = the scheduler is dead. That's the whole signal.
+# Keep it enabled — the watchdog depends on it.
+name: dagu-heartbeat
+description: Write scheduler proof-of-life timestamp every 5 min (watched by dagu-watchdog OS timer).
+tags:
+  - script
+  - infra
+schedule: "*/5 * * * *"
+timeout_sec: 10
+max_active_runs: 1
+steps:
+  - name: ping
+    command: /bin/bash -c 'echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ") ok" >> /var/lib/agent-os/dagu-heartbeat.log && tail -c 4096 /var/lib/agent-os/dagu-heartbeat.log > /tmp/dagu-heartbeat.tmp && mv /tmp/dagu-heartbeat.tmp /var/lib/agent-os/dagu-heartbeat.log'
