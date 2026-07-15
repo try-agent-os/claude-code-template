@@ -94,3 +94,6 @@ Thumbs.db
 # never be published by accident. If YOUR repo is private and you want the gate to
 # survive a fresh clone, commit it deliberately: git add -f .pr-leak-scan.json
 .pr-leak-scan.json
+
+# Credential liveness probe config (holds YOUR integration list; env var NAMES only)
+.integration-liveness.json

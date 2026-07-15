@@ -33,7 +33,10 @@ jobs:
             scripts/worker-supervisor.sh \
             scripts/pr-leak-scan.sh \
             scripts/pr-leak-scan-fire.sh \
-            tests/pr-leak-scan/run.sh
+            tests/pr-leak-scan/run.sh \
+            scripts/integration-liveness.sh \
+            scripts/lib/gws-has-scope.sh \
+            tests/integration-liveness/run.sh
 
   leak-scan-selftest:
     name: pr-leak-scan self-test
@@ -45,6 +48,20 @@ jobs:
         # matcher reports CLEAN and the PR merges. So its exit codes are pinned
         # by tests and run on every PR.
         run: tests/pr-leak-scan/run.sh
+
+  integration-liveness-selftest:
+    name: integration-liveness self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run credential-probe self-test
+        # This probe is a watchdog whose failure mode is silent in BOTH
+        # directions: a broken matcher reports a dead credential alive (it rots
+        # undetected), and an over-eager one reports a live credential dead (the
+        # alert gets muted). So its verdicts are pinned by tests on every PR.
+        # The suite is hermetic - fake CLIs + a loopback HTTP server, no network
+        # and no credentials.
+        run: tests/integration-liveness/run.sh
 
   json-validate:
     name: JSON validity (config templates + manifests)
