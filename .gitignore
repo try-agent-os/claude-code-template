@@ -88,3 +88,9 @@ dist/
 
 # OS
 Thumbs.db
+
+# pr-leak-scan config: your real names/domains/hosts/ids — i.e. exactly the data
+# the scanner exists to keep out of a public repo. Ignored by default so it can
+# never be published by accident. If YOUR repo is private and you want the gate to
+# survive a fresh clone, commit it deliberately: git add -f .pr-leak-scan.json
+.pr-leak-scan.json

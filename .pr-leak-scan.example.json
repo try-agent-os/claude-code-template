@@ -1,0 +1,51 @@
+{
+  "_readme": [
+    "Config for scripts/pr-leak-scan.sh — the deterministic leak gate over PR diffs.",
+    "Copy to .pr-leak-scan.json (gitignored) and replace every value below with YOUR OWN.",
+    "The scanner works with no config at all (built-in secret patterns still run);",
+    "this file is what teaches it which strings are personal to THIS install.",
+    "",
+    "identity -> HIGH  = a direct leak. Any match blocks the PR (exit 2).",
+    "soft     -> MEDIUM = context-dependent. Match alone means 'judge it' (exit 3),",
+    "                     because these strings also appear in legitimate generic docs.",
+    "allow      -> regexes for added LINES that are known-benign (placeholders, examples).",
+    "skip_files -> regexes for whole PATHS to ignore, e.g. fixtures that hold fake",
+    "              credentials by design. tests/pr-leak-scan/ is skipped built-in.",
+    "",
+    "Every entry except 'regexes' is matched literally (regex-escaped) and",
+    "case-insensitively, on word boundaries. Use 'regexes' only where a literal",
+    "cannot express the shape (phone formats, path prefixes, id ranges)."
+  ],
+
+  "identity": {
+    "names": ["Jane Doe", "Doe"],
+    "domains": ["jane-doe.dev", "janedoe.example.org"],
+    "handles": ["@janedoe", "@jdoe_personal"],
+    "emails": ["jane@jane-doe.dev"],
+    "ips": ["203.0.113.10", "2001:db8::1"],
+    "literals": ["Rua Example 1, 2.º A", "987654321"],
+    "regexes": [
+      "\\+1[\\s.-]?\\d{3}[\\s.-]?\\d{3}[\\s.-]?\\d{4}",
+      "\\bacct-[0-9]{8}\\b"
+    ]
+  },
+
+  "soft": {
+    "hosts": ["my-vps-01", "old-box"],
+    "slugs": ["acme-corp", "side-project"],
+    "regexes": [
+      "\\bmemory/(?:context|decisions|people|contacts|learnings|patterns|check-log)\\b",
+      "/(?:home|opt)/my-org(?:/claude)?\\b"
+    ]
+  },
+
+  "skip_files": [
+    "^tests/fixtures/",
+    "^docs/examples/"
+  ],
+
+  "allow": [
+    "example\\.(?:com|org|net)",
+    "(?i)\\b(?:placeholder|redacted|your[_-]?(?:name|token|key)|xxx+|<[a-z-]+>)\\b"
+  ]
+}

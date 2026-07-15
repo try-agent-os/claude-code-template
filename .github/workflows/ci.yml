@@ -30,7 +30,21 @@ jobs:
             scripts/verify.sh \
             scripts/spawn-worker.sh \
             scripts/worker-launcher-tick.sh \
-            scripts/worker-supervisor.sh
+            scripts/worker-supervisor.sh \
+            scripts/pr-leak-scan.sh \
+            scripts/pr-leak-scan-fire.sh \
+            tests/pr-leak-scan/run.sh
+
+  leak-scan-selftest:
+    name: pr-leak-scan self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scanner self-test
+        # The scanner is a security gate whose failure mode is silent: a broken
+        # matcher reports CLEAN and the PR merges. So its exit codes are pinned
+        # by tests and run on every PR.
+        run: tests/pr-leak-scan/run.sh
 
   json-validate:
     name: JSON validity (config templates + manifests)
