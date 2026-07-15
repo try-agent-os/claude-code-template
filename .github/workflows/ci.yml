@@ -34,6 +34,7 @@ jobs:
             scripts/pr-leak-scan.sh \
             scripts/pr-leak-scan-fire.sh \
             tests/pr-leak-scan/run.sh \
+            tests/needs-human/run.sh \
             scripts/integration-liveness.sh \
             scripts/lib/gws-has-scope.sh \
             tests/integration-liveness/run.sh \
@@ -65,6 +66,19 @@ jobs:
         # The suite is hermetic - fake CLIs + a loopback HTTP server, no network
         # and no credentials.
         run: tests/integration-liveness/run.sh
+
+  needs-human-selftest:
+    name: needs-human drain-gate self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run drain safety-gate self-test
+        # This gate decides whether the queue hands a task to a worker or holds
+        # it for a human, and BOTH its failure modes are silent: over-gating
+        # stops a class of tasks draining with nothing going red, under-gating
+        # hands a worker a task a person had to see. So its verdicts are pinned
+        # by tests on every PR. Pure python, no network.
+        run: tests/needs-human/run.sh
 
   json-validate:
     name: JSON validity (config templates + manifests)

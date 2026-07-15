@@ -56,6 +56,12 @@ from datetime import datetime, timedelta, timezone
 
 LAUNCHER, TEMPLATE, NOTIFY, REPO, ENV_FILE = sys.argv[1:6]
 
+# Drain safety-gate. Enforcement is tag-based and lives in exactly one place so
+# that task generators and this launcher can never disagree about what a human
+# still has to look at. See scripts/lib/needs_human.py.
+sys.path.insert(0, os.path.join(REPO, "scripts", "lib"))
+from needs_human import is_manual_gated
+
 # --- Task backend config (env, with env-file fallback) ---
 def _from_env_file(key):
     try:
@@ -95,6 +101,16 @@ if not todo:
 
 def pickable(t: dict) -> bool:
     name = t.get("name", "")
+    raw_tags = t.get("tags", [])
+    tag_names = {(tag["name"] if isinstance(tag, dict) else tag) for tag in raw_tags}
+    # HUMAN GATE: `needs-human` (or `manual-only`) opts a task back OUT, even
+    # when it carries `auto-worker`. Generators stamp the tag on tasks a person
+    # must see first; removing the tag after review releases the task.
+    # Checked FIRST, before every other branch, so that it holds for `Scheduled:`
+    # tasks too — a gate with an exception is not a gate, and the exception would
+    # be silent.
+    if is_manual_gated(name, tag_names):
+        return False
     # START-DATE GATE: a task with a future start_date is deferred — skipped
     # until that wall-clock moment, then drained normally. Lets a task self-
     # activate at a set time without a one-shot cron. start_date is epoch-ms
@@ -114,8 +130,6 @@ def pickable(t: dict) -> bool:
     # User tasks — require the `auto-worker` opt-in tag. ALL priorities drain
     # (urgency is ordering, not a gate); the tag is the safety valve so
     # judgment/personal tasks are never auto-grabbed.
-    raw_tags = t.get("tags", [])
-    tag_names = {(tag["name"] if isinstance(tag, dict) else tag) for tag in raw_tags}
     return "auto-worker" in tag_names
 
 def _prio_rank(t: dict) -> int:
@@ -133,8 +147,8 @@ candidate = min(_pickables, key=_prio_rank) if _pickables else None
 if candidate is None:
     sys.exit(0)
 
-# slugify — single source of truth (scripts/lib/slugify.py).
-sys.path.insert(0, f"{REPO}/scripts/lib")
+# slugify — single source of truth (scripts/lib/slugify.py). scripts/lib is
+# already on sys.path from the drain-gate import above.
 from slugify import slugify
 
 title = candidate["name"]
