@@ -9,6 +9,7 @@ This is a meta-plugin: it ships operational `/agentos:*` commands that wrap `sys
 | Skill | What it does |
 |---|---|
 | `dagu` | Full CLI control over the Dagu routines engine (`agent-os-dagu.service`): start/stop/retry DAG runs, view status/history, validate `routines/*.yaml` before deploy, list genuine (recent) failures. |
+| `md2phone` | Serve a local markdown/HTML file (or folder) over a cloudflared quick tunnel so it can be read on a phone: renders `.md` to a mobile-friendly page with Open Graph preview tags, no account or deploy needed. |
 
 ## Commands
 
