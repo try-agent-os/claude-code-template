@@ -36,7 +36,10 @@ jobs:
             tests/pr-leak-scan/run.sh \
             scripts/integration-liveness.sh \
             scripts/lib/gws-has-scope.sh \
-            tests/integration-liveness/run.sh
+            tests/integration-liveness/run.sh \
+            scripts/check-fire.sh \
+            scripts/fire-step.sh \
+            scripts/lib/dep-reachable.sh
 
   leak-scan-selftest:
     name: pr-leak-scan self-test
@@ -198,3 +201,13 @@ jobs:
             fi
           done
           echo "✓ syntax + apt names checked on ${{ matrix.distro }}"
+
+  self-tests:
+    name: Self-tests (scheduled-check layer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check-fire / fire-step / dep-reachable / clickup_upsert
+        # Fully offline: the ClickUp call and the dep probes are stubbed through
+        # the REPO_ROOT seam. No token or network required.
+        run: tests/check-fire/run.sh

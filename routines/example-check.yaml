@@ -1,0 +1,59 @@
+# example-check — the per-routine "scheduled check" skeleton. COPY, DON'T EDIT.
+#
+# The shape: one yaml per check, each owning its own cron line, each firing ONE
+# task into the queue for a worker to pick up. Adding a check is one file + PR —
+# no code change, no daemon-reload.
+#
+#   cp routines/example-check.yaml routines/<your-check>.yaml
+#   # set name/description/schedule, and the fire-step.sh arguments
+#   dagu dry <your-check>          # validate without firing
+#   scripts/dagu-run.sh <your-check>   # fire one run now
+#
+# This file intentionally ships WITHOUT a `schedule:` — it is a template, and a
+# copy-me example that fires real tasks into your queue on a timer is a trap.
+# Uncomment the schedule in YOUR copy.
+#
+# Prerequisites (see .env.example): CLICKUP_SCHEDULED_LIST_ID, CLICKUP_TEAM_ID
+# and a ClickUp token. Without them check-fire.sh fails loudly rather than
+# quietly doing nothing.
+#
+# DAG YAML reference: https://docs.dagu.cloud/
+name: example-check
+description: Template for a scheduled check — fires one idempotent task into the queue.
+tags:
+  - example
+  - check
+# Cron 5-field: minute hour day-of-month month day-of-week. Uncomment in a copy.
+# schedule: "0 8 * * *"
+timeout_sec: 30
+# A check must never race itself: the upsert is idempotent, but two concurrent
+# firings would still each spend an API round-trip to reach the same task.
+max_active_runs: 1
+steps:
+  - name: fire
+    # fire-step.sh forwards every argument verbatim to check-fire.sh and resolves
+    # the repo from its own location — hence no working_dir here.
+    #
+    # Arguments: <check-id> <priority> "<description>"
+    #   check-id     stable slug; it IS the idempotency key. Firing daily with the
+    #                same id refreshes one task instead of creating a pile.
+    #   priority     low | medium | high | critical
+    #   description  the body a worker will read as its prompt — say what "done"
+    #                means, not just the topic.
+    command: >-
+      /opt/agent-os/claude/scripts/fire-step.sh
+      example-check low
+      "Example scheduled check. Replace with the real instruction for the worker:
+      what to look at, what to produce, and what 'done' looks like."
+
+  # Gate a check on a dependency it cannot work without — firing a worker at a
+  # dead backend burns budget to rediscover that it is dead. The gate reopens by
+  # itself when the dep recovers.
+  #
+  # - name: fire-calendar-digest
+  #   command: >-
+  #     /opt/agent-os/claude/scripts/fire-step.sh --require-dep calendar
+  #     calendar-digest medium "Today's calendar: meetings, prep, conflicts."
+  #
+  # `clickup` is built in; any other name resolves to
+  # scripts/lib/dep-checks/<dep>.sh (see dep-reachable.sh).

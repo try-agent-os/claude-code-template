@@ -330,4 +330,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # A misconfigured run (no token, no team id) is an operator error, not a bug:
+    # from cron/Dagu it must read as one actionable line, not a traceback. Exit 2
+    # keeps it distinct from 1, which `find` already uses for "no such task".
+    # Library callers still get the RuntimeError — only the CLI edge converts it.
+    try:
+        sys.exit(main())
+    except RuntimeError as e:
+        print(f"[clickup_upsert] {e}", file=sys.stderr)
+        sys.exit(2)
