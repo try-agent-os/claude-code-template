@@ -20,8 +20,8 @@
 set -uo pipefail
 
 # SERVICE / SESSION / state / log are env-overridable so the SAME script drives
-# per-instance liveness watchdogs (symoditi/novostudio). Defaults reproduce the
-# hub operator byte-for-byte — do NOT change them; override via the systemd unit.
+# per-instance liveness watchdogs. Defaults reproduce the hub operator
+# byte-for-byte — do NOT change them; override via the systemd unit.
 SERVICE="${OPERATOR_SERVICE:-agent-os-operator.service}"
 SESSION="${OPERATOR_TMUX_SESSION:-operator}"
 LOG_DIR="/var/log/agent-os"
@@ -38,7 +38,7 @@ log() { printf '%s %s\n' "$(date -u -Iseconds)" "$*" >> "$LOG_FILE"; }
 
 # Derive the operator's run user + tmux socket from the unit itself, so this is
 # not hardcoded to one host (the legacy operator-watchdog.sh hardcoded
-# `agent-os` and silently no-ops on this vasily-based hub).
+# `agent-os` and silently no-ops on a hub whose agent user is not agent-os).
 AGENT_USER="$(systemctl show -p User --value "$SERVICE" 2>/dev/null)"
 [ -n "$AGENT_USER" ] || AGENT_USER="agent-os"
 AGENT_UID="$(id -u "$AGENT_USER" 2>/dev/null || echo "")"
