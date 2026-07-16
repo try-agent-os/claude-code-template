@@ -49,6 +49,7 @@ telegram-mcp*.log
 /memory/sessions/
 /memory/worker-activity.log
 /memory/worker-activity/
+/memory/operator-context-snapshot.md
 
 # Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
 .env

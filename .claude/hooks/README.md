@@ -7,6 +7,7 @@ Project-level lifecycle hooks wired in `.claude/settings.json`. Each hook reads 
 | Script | Event | Matcher | Async | Always-on |
 |--------|-------|---------|-------|-----------|
 | `boot.sh` | `SessionStart` | `startup`, `compact` | no | yes |
+| `precompact-snapshot.sh` | `PreCompact` | `*` | no | yes |
 | `enrich-prompt.sh` | `UserPromptSubmit` | — | no | yes |
 | `guard-bash.sh` | `PreToolUse` | `Bash` | no | **always (security gate)** |
 | `guard-edit.sh` | `PreToolUse` | `Edit\|Write\|MultiEdit` | no | **always (file protection)** |
@@ -49,6 +50,8 @@ Both `Stop` and `SubagentStop` can re-fire if a hook returned feedback. Each scr
 | `SAGA_MCP_HEALTH_URL` | `boot` | `http://localhost:3851/health` | Health-check endpoint |
 | `TELEGRAM_MCP_HEALTH_URL` | `boot` | (unset — skipped) | Optional |
 | `AGENTOS_HOOKS_LOG_DIR` | all | `/tmp/agentos-hooks` | Per-hook log directory |
+| `PRECOMPACT_MSG_COUNT` | `precompact-snapshot` | `30` | Transcript tail length, in messages |
+| `PRECOMPACT_SNAPSHOT_DIR` | `precompact-snapshot` | `$AGENTOS_HOOKS_LOG_DIR` | Where snapshots are written |
 | `AGENTOS_AUDIT_LOG` | `log-action`, `log-subagent` | `${CLAUDE_PROJECT_DIR}/.claude/audit.log` | Audit append-log |
 
 systemd units inherit these via `EnvironmentFile=/etc/agent-os/agent-os.env`.
