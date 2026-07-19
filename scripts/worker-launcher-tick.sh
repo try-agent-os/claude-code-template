@@ -84,17 +84,40 @@ if not TOKEN or not TEAM_ID:
 # Fetch todo tasks. include_subtasks=true so nested urgent/high subtasks are
 # pickable (otherwise the Team API returns only top-level tasks and the queue
 # looks empty when all eligible work is nested).
-url = (f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?"
-       f"statuses[]=todo&include_closed=false&include_subtasks=true&page=0")
+#
+# PAGINATE. The team endpoint hard-caps at 100 tasks per page, so a single
+# `page=0` fetch silently truncates the queue: with more than 100 open todos,
+# every task past ~position 100 in the default ordering becomes invisible to the
+# launcher — forever, and with no error anywhere. The cron DAG keeps reporting
+# green while the tail of the queue never launches. Loop until a short page
+# (< PAGE_SIZE) ends it; the page guard bounds a pathological run.
+BASE = (f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?"
+        f"statuses[]=todo&include_closed=false&include_subtasks=true")
 if SPACE_ID:
-    url += f"&space_ids[]={SPACE_ID}"
-req = urllib.request.Request(url, headers={"Authorization": TOKEN})
-try:
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        todo = json.loads(resp.read()).get("tasks", [])
-except Exception as e:
-    print(f"[worker-launcher] task backend API error: {e}", file=sys.stderr)
-    sys.exit(0)
+    BASE += f"&space_ids[]={SPACE_ID}"
+PAGE_SIZE = 100
+MAX_PAGES = 20
+todo = []
+for page in range(MAX_PAGES):
+    req = urllib.request.Request(f"{BASE}&page={page}", headers={"Authorization": TOKEN})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            batch = json.loads(resp.read()).get("tasks", [])
+    except Exception as e:
+        print(f"[worker-launcher] task backend API error (page {page}): {e}", file=sys.stderr)
+        # Partial-fetch resilience: pages already gathered are still valid work.
+        # Only a failure on page 0 leaves us with nothing to do.
+        if page == 0:
+            sys.exit(0)
+        print(f"[worker-launcher] proceeding with {len(todo)} tasks from pages 0..{page - 1}",
+              file=sys.stderr)
+        break
+    todo.extend(batch)
+    if len(batch) < PAGE_SIZE:
+        break
+else:
+    print(f"[worker-launcher] WARN hit the {MAX_PAGES}-page guard — queue may be truncated",
+          file=sys.stderr)
 
 if not todo:
     sys.exit(0)
@@ -109,7 +132,13 @@ def pickable(t: dict) -> bool:
     # Checked FIRST, before every other branch, so that it holds for `Scheduled:`
     # tasks too — a gate with an exception is not a gate, and the exception would
     # be silent.
+    #
+    # Every gate below prints WHY it skipped. The launcher's only visible failure
+    # mode is "the queue looks empty", and a silent `return False` makes that
+    # indistinguishable from "there genuinely is no work" — the difference between
+    # a 20-minute diagnosis and a 20-day one.
     if is_manual_gated(name, tag_names):
+        print(f"[worker-launcher] skip {t.get('id')} ({name[:60]}): human gate", file=sys.stderr)
         return False
     # START-DATE GATE: a task with a future start_date is deferred — skipped
     # until that wall-clock moment, then drained normally. Lets a task self-
@@ -119,6 +148,8 @@ def pickable(t: dict) -> bool:
     if sd:
         try:
             if int(sd) > int(datetime.now(timezone.utc).timestamp() * 1000):
+                print(f"[worker-launcher] skip {t.get('id')} ({name[:60]}): start_date in the future",
+                      file=sys.stderr)
                 return False
         except (TypeError, ValueError):
             pass

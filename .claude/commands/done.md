@@ -10,18 +10,19 @@ You're closing this worker session. Execute these steps in order. Don't skip any
 ## 0. Merge your isolated worktree into main (git) — REQUIRED if you committed code
 
 Each worker that runs in the main repo gets its OWN `git worktree` on branch
-`worker/<slug>` (env `AGENTOS_WORKER_WORKTREE` / `AGENTOS_WORKER_BRANCH`), so your
-commits never touch the operator's main tree. The merge back to `main` happens
+`worker/<slug>-<epoch>` (env `AGENTOS_WORKER_WORKTREE` / `AGENTOS_WORKER_BRANCH`), so
+your commits never touch the operator's main tree. The merge back to `main` happens
 HERE, atomically, by fast-forward-pushing your branch straight to `origin/main`
 (no local checkout switch → zero contention with operator/sibling workers).
 
 ```bash
 WT="${AGENTOS_WORKER_WORKTREE:-}"; BR="${AGENTOS_WORKER_BRANCH:-}"
 MAIN="${AGENTOS_WORKER_MAIN_REPO:-$(git rev-parse --show-toplevel)}"
+DELIVERY_STATUS="n/a"    # n/a (no code) | ok (HEAD in origin/main) | FAILED (orphaned)
 if [ -n "$WT" ] && [ -d "$WT" ]; then
   cd "$WT"
   if [ -n "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
-    git push -u origin "$BR"                       # branch link for the comment below
+    git push -u origin "$BR"                       # unique per-worker branch — never races a sibling
     merged=0
     for i in 1 2 3 4 5; do                         # retry: sibling worker may push first
       git fetch origin main
@@ -29,18 +30,65 @@ if [ -n "$WT" ] && [ -d "$WT" ]; then
       if git push origin HEAD:main; then merged=1; echo "MERGED $BR -> origin/main"; break; fi
       sleep 2
     done
-    [ "$merged" = 1 ] || echo "WARN: ff-push to main failed — branch '$BR' is pushed; resolve by hand"
+    # VERIFY GATE — a green /done must NOT be reported while ANY commit is missing
+    # from origin/main. Without it a lost ff-push race is indistinguishable from
+    # success: the worker reports `outcome: done`, the branch is orphaned, and the
+    # work is only found by hand days later (GitHub happily serves dangling commits
+    # by SHA, so even a commit link in the report looks healthy). The gate runs
+    # BEFORE the comment and BEFORE any cleanup: every commit still listed in
+    # `origin/main..HEAD` is by definition NOT delivered, so a non-empty list =
+    # FAILED. Never take a commit SHA for the report before this passes.
+    git fetch origin main -q 2>/dev/null || true
+    UNDELIVERED=""
+    for sha in $(git rev-list origin/main..HEAD 2>/dev/null); do
+      git merge-base --is-ancestor "$sha" origin/main 2>/dev/null || UNDELIVERED="$UNDELIVERED $sha"
+    done
+    if [ -z "$UNDELIVERED" ] && git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main 2>/dev/null; then
+      DELIVERY_STATUS="ok"; echo "DELIVERY OK: every commit is an ancestor of origin/main"
+    else
+      DELIVERY_STATUS="FAILED"
+      echo "DELIVERY FAILED: not in origin/main —$UNDELIVERED (branch '$BR' orphaned, work NOT delivered)"
+      # Sentinel: tells spawn-worker.sh's orphan GC that this worktree holds
+      # undelivered work and must NOT be reaped when this session dies (the GC keys
+      # on a dead tmux session, which /done is about to cause). Self-clearing: the
+      # GC reaps the worktree once the commits genuinely land in origin/main.
+      printf 'branch=%s\nhead=%s\nundelivered=%s\ntask=%s\nat=%s\n' \
+        "$BR" "$(git rev-parse HEAD)" "$UNDELIVERED" "${AGENTOS_WORKER_CLICKUP_TASK_ID:-unknown}" \
+        "$(date -u +%FT%TZ)" > "$WT/.agentos-undelivered"
+      git push -u origin "$BR" 2>/dev/null || true   # best-effort: keep work reachable from the remote too
+      [ -x "${MAIN}/scripts/notify-operator.sh" ] && "${MAIN}/scripts/notify-operator.sh" \
+        --source worker --severity warn \
+        --msg "worker ${AGENTOS_WORKER_TASK_ID:-$BR}: /done verify-gate FAILED — commits never reached main, branch '${BR}' orphaned, worktree preserved, needs a manual re-merge" \
+        2>/dev/null || true
+    fi
   else
     echo "no commits on $BR — nothing to merge"
   fi
 fi
 ```
 
-If `merged=1`, your work is on `origin/main`; the operator's main tree picks it up
-on its next pull or the next worker spawn's fetch. If the ff-push could not
-complete after retries, DO NOT force it — finalize, link the branch in the
-comment, and note "merge pending" so it can be resolved by hand. (If
-`AGENTOS_WORKER_WORKTREE` is empty — a submodule-routed worker or the shared-tree
+Read `DELIVERY_STATUS` and let it steer the finalization below — it is the source of
+truth for whether your code actually landed:
+
+- **`ok`** — your work is on `origin/main`; the operator's main tree picks it up on its
+  next pull or the next worker spawn's fetch. Proceed normally.
+- **`FAILED`** — the gate caught undelivered commits. **STOP: do not run steps 1-5 of this
+  skill.** DO NOT force-push, DO NOT report a clean success, and above all **DO NOT remove
+  the worktree** — it is the only place the work is guaranteed to be reachable, and deleting
+  it (or its branch) is what turns a lost race into permanently orphaned commits. The alert
+  already fired and `.agentos-undelivered` now protects the worktree from the orphan GC.
+  Hand off to the blocked path:
+
+  ```
+  /blocked merge-to-main FAILED — branch <BR> orphaned, commits NOT in origin/main, worktree preserved for re-merge
+  ```
+
+  `/blocked` posts `outcome: blocked` with the branch-tree link, sets status `blocked`
+  (never `done` — a silent `done` on lost work is exactly the defect this gate exists to
+  kill), and skips the worktree cleanup while the sentinel is present.
+- **`n/a`** — no commits to merge (no-op / read-only run); nothing to deliver, proceed normally.
+
+(If `AGENTOS_WORKER_WORKTREE` is empty — a submodule-routed worker or the shared-tree
 fallback — skip this step and follow that project's own git flow.)
 
 ## 1. Task-backend comment (markdown, REQUIRED)
@@ -149,9 +197,14 @@ cwd-inside the dir you're removing — `git -C "$MAIN"`), then kill the session.
 spawn-worker.sh also prunes stale worktrees on respawn, so a missed cleanup here
 is self-healing, but do it anyway to keep `git worktree list` tidy.
 
+The `.agentos-undelivered` guard below is a backstop: cleanup must never run on a
+worktree holding undelivered commits, whatever path led here.
+
 ```bash
 MAIN="${AGENTOS_WORKER_MAIN_REPO:-$(git rev-parse --show-toplevel)}"
-if [ -n "${AGENTOS_WORKER_WORKTREE:-}" ]; then
+if [ -f "${AGENTOS_WORKER_WORKTREE:-/nonexistent}/.agentos-undelivered" ]; then
+  echo "REFUSING cleanup: worktree holds undelivered commits (see .agentos-undelivered) — use /blocked"
+elif [ -n "${AGENTOS_WORKER_WORKTREE:-}" ]; then
   git -C "$MAIN" worktree remove --force "$AGENTOS_WORKER_WORKTREE" 2>/dev/null || true
   git -C "$MAIN" worktree prune 2>/dev/null || true
   [ -n "${AGENTOS_WORKER_BRANCH:-}" ] && git -C "$MAIN" branch -D "$AGENTOS_WORKER_BRANCH" 2>/dev/null || true
