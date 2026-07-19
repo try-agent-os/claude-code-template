@@ -21,6 +21,10 @@
 #   2) Verify managed-settings (/etc/claude-code/managed-settings.json) is still
 #      present + valid JSON (channels/plugins policy). Best-effort: the file is
 #      root-owned, so a read failure is reported as a warning, not a hard fail.
+#   3) Smoke-test slash-command injection (scripts/inject-smoke-test.sh) against
+#      the NEW binary. A CLI update can silently break /clear + /model injection
+#      into live tmux sessions; the daily update is where that regression is
+#      cheapest to catch. Skipped (not fatal) if the smoke script is absent.
 #
 # Notifications: on a real update OR on any error -> optional notify hook
 #   (AGENT_OS_NOTIFY_HOOK, called with --source claude-cli-update --severity
@@ -121,6 +125,25 @@ RUN_OK="yes"
 "$CLAUDE_BIN" --version >/dev/null 2>&1 || RUN_OK="NO"
 log "post-update claude --version runs: $RUN_OK"
 
+# Smoke-test the slash-command INJECT mechanism against the NEW binary. A CLI
+# update can silently break /clear + /model injection (the 2.1.211 -> 2.1.212
+# build started swallowing bulk send-keys as a paste). This spawns a throwaway
+# session and confirms a char-by-char /clear still registers.
+# ok / BROKEN / inconclusive / skipped (smoke script absent).
+INJECT_STATUS="skipped"
+SMOKE="$PROJECT_DIR/scripts/inject-smoke-test.sh"
+if [ -x "$SMOKE" ]; then
+  INJECT_OUT="$(/bin/bash "$SMOKE" 2>&1)"; INJECT_RC=$?
+  log "inject-smoke rc=$INJECT_RC out=$(printf '%s' "$INJECT_OUT" | tr '\n' ' ' | head -c 200)"
+  case "$INJECT_RC" in
+    0) INJECT_STATUS="ok" ;;
+    1) INJECT_STATUS="BROKEN (/clear inject regressed — verify /clear and /model!)" ;;
+    *) INJECT_STATUS="inconclusive" ;;
+  esac
+else
+  log "WARN: inject-smoke-test.sh missing/not-exec: $SMOKE"
+fi
+
 # Verify managed-settings present + valid JSON (best-effort; root-owned file).
 MS_STATUS=""
 if [ -r "$MANAGED_SETTINGS" ]; then
@@ -138,11 +161,11 @@ log "managed-settings: $MS_STATUS"
 
 # --- Notify operator -----------------------------------------------------------
 SEV="info"
-case "$PATCH_STATUS$RUN_OK$MS_STATUS" in
-  *FAILED*|*NO*|*INVALID*|*MISSING*) SEV="error" ;;
+case "$PATCH_STATUS$RUN_OK$MS_STATUS$INJECT_STATUS" in
+  *FAILED*|*NO*|*INVALID*|*MISSING*|*BROKEN*) SEV="error" ;;
 esac
 
-notify "$SEV" "claude-cli-update: $OLD_VER -> $NEW_VER. dev-channels patch: $PATCH_STATUS. claude runs: $RUN_OK. managed-settings: $MS_STATUS. Log: $LOG_FILE"
+notify "$SEV" "claude-cli-update: $OLD_VER -> $NEW_VER. dev-channels patch: $PATCH_STATUS. claude runs: $RUN_OK. managed-settings: $MS_STATUS. slash-inject (/clear): $INJECT_STATUS. Log: $LOG_FILE"
 
-log "done: $OLD_VER -> $NEW_VER (patch=$PATCH_STATUS run=$RUN_OK ms=$MS_STATUS)"
+log "done: $OLD_VER -> $NEW_VER (patch=$PATCH_STATUS run=$RUN_OK ms=$MS_STATUS inject=$INJECT_STATUS)"
 exit 0
