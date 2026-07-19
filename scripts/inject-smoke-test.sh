@@ -56,13 +56,49 @@ for _ in $(seq 1 25); do
 done
 [ -n "$ready" ] || { echo "inconclusive: throwaway session never became ready"; exit 2; }
 
-# The actual test: does a char-by-char /clear register in the composer? The
-# primitive returns 0 iff it verified the command text landed (and then submits
-# it — harmless on a throwaway session).
-if tmux_inject_slash "$SOCKET" "$SESS" "/clear" >/dev/null 2>&1; then
-  echo "ok: /clear registered & submitted (char-by-char inject healthy)"
-  exit 0
-else
-  echo "BROKEN: /clear did NOT register in composer — slash-inject regressed (paste-swallow?)"
+# Test 1 — IDLE composer: does a char-by-char /clear register and execute? The
+# primitive returns 0 iff it verified the command landed at the start of the
+# composer and Enter did not queue it as a message.
+if ! tmux_inject_slash "$SOCKET" "$SESS" "/clear" >/dev/null 2>&1; then
+  echo "BROKEN: /clear did NOT register on an idle composer — slash-inject regressed (paste-swallow?)"
   exit 1
 fi
+
+# Test 2 — BUSY composer (the 2026-07-18 regression class): while claude is
+# mid-turn, typed text is QUEUED as the next MESSAGE, so a naive inject submits
+# /clear as literal chat text. The primitive must interrupt to an idle composer
+# first. Make the throwaway session busy, then inject and confirm it did NOT get
+# queued (a fresh "Welcome back" banner => /clear actually executed).
+"${TB[@]}" send-keys -t "$SESS" -l "Write a very long 20-paragraph essay about the history of tea." 2>/dev/null
+sleep 0.3; "${TB[@]}" send-keys -t "$SESS" Enter 2>/dev/null
+# Busy is detected with the same extended marker the inject primitive uses
+# (spinner elapsed timer / token counter / legacy "esc to interrupt") — some CC
+# 2.1.x renders no longer print the legacy string mid-turn, which would make a
+# legacy-only probe skip the busy path as "unexercised" on a genuinely busy
+# session. Poll up to ~10s for the turn to actually start (model latency varies).
+_busy_marker='esc to interrupt|\([0-9]+s |[0-9]+ tokens'
+busy=""
+for _ in $(seq 1 20); do
+  sleep 0.5
+  if "${TB[@]}" capture-pane -p -t "$SESS" 2>/dev/null | grep -qiE "$_busy_marker"; then busy=1; break; fi
+done
+if [ -z "$busy" ]; then
+  echo "ok: /clear registered on idle (busy-path unexercised — session did not stay busy)"
+  exit 0
+fi
+if ! tmux_inject_slash "$SOCKET" "$SESS" "/clear" >/dev/null 2>&1; then
+  echo "BROKEN: /clear inject failed on a BUSY session (busy-interrupt path regressed)"
+  exit 1
+fi
+sleep 1.5
+pane="$("${TB[@]}" capture-pane -p -S -200 -t "$SESS" 2>/dev/null)"
+if echo "$pane" | grep -qiF "Press up to edit queued messages"; then
+  echo "BROKEN: /clear was QUEUED as a message on a busy session (busy-gate regressed)"
+  exit 1
+fi
+if ! echo "$pane" | grep -qF "Welcome back"; then
+  echo "BROKEN: /clear on a busy session did NOT execute (no fresh banner after interrupt)"
+  exit 1
+fi
+echo "ok: /clear healthy on idle AND busy composer (char-by-char + busy-interrupt gate)"
+exit 0
