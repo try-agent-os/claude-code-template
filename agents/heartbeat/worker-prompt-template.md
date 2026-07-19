@@ -46,11 +46,11 @@ Do NOT match on `cwd == <repo root>` or on "has a TTY" — **both match workers 
 
 The actual differentiator is the operator's working directory. To pick the operator peer:
 
-1. **Primary:** the peer whose `cwd` **contains `/agents/operator`** (the operator runs from `…/agents/operator`). This excludes workers (`cwd` = repo root, no `/agents/…` suffix) and excludes sysadmin/heartbeat (`/agents/sysadmin`, `/agents/heartbeat`). This is the same rule `scripts/notify-operator.sh` uses (`"/operator" in cwd`).
-2. **Fallback:** if no peer matches by `cwd`, take the peer whose `summary` contains "operator".
+1. **Primary — slug, scoped to THIS instance:** the peer whose `slug` is `<instance>:operator` (or the bare legacy `operator`), where `<instance>` is this deployment's `$AGENT_OS_INSTANCE`. A slug that carries a *different* namespace (`<other>:operator`) belongs to a neighbouring AgentOS instance on the same host — **never route there**.
+2. **Fallback (slug missing):** the peer whose `cwd` ends with `/operator` **and** starts with this repo's `INSTALL_ROOT`. The root check is what keeps a neighbour instance's operator out: without it, `/home/<other-instance>/…/operator` matches too.
 3. **Tie-break:** if multiple candidates remain (e.g. a stale operator slug from another host alongside the local one), pick the **most recent by `last_seen`**.
 
-The HTTP fallback `scripts/notify-operator.sh` already encodes step 1 (`"/operator" in (p.get("cwd") or "")` → operator peer id), so its selection logic deliberately mirrors this heuristic — keep the two in sync if you change either.
+The HTTP fallback `scripts/notify-operator.sh` encodes exactly this rule (slug first, then `INSTALL_ROOT`-scoped `cwd`) — keep the two in sync if you change either.
 - **Fallback:** if peer-send fails, notify via `scripts/notify-operator.sh --source worker --severity info --msg "..."` — never finish silently.
 - **Inbound** — peer push arrives natively in your context as `<channel source="claude-peers">` blocks (interactive TTY + `--dangerously-load-development-channels server:claude-peers` enabled). RESPOND IMMEDIATELY when one arrives, even mid-task, then resume.
 
