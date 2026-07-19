@@ -43,6 +43,7 @@ telegram-mcp*.log
 *.session.jsonl
 /.claude/audit.log
 /.claude/scheduled_tasks.lock
+CHANGELOG.md.lock
 /.claude/settings.local.json
 /.claude/agent-memory/
 /memory/sessions.log

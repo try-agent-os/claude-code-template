@@ -1,0 +1,10 @@
+# Append-only files: use union merge so parallel agents/workers don't conflict.
+# merge=union keeps every line from both sides — the right semantics for a file
+# that is only ever appended to, and the wrong one for anything edited in place.
+*.log merge=union
+logs/**/*.log merge=union
+
+# CHANGELOG — append-only by convention (scripts/changelog-append.sh). Parallel
+# worker branches each add their own dated section; a textual 3-way merge turns
+# that into a conflict on nearly every rebase. union keeps both sides' entries.
+CHANGELOG.md merge=union
