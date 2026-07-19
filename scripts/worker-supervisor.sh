@@ -125,6 +125,32 @@ except Exception: print('[]')
 " 2>/dev/null || echo "[]"
 }
 
+# comments_have_done <comments_json> → "1" if one of the last 4 comments carries
+# the worker's own `outcome: done` marker, else "0". A finished worker always
+# posts that line before /done, so it is the ground truth for "the work is
+# over" even when the task status was never flipped.
+comments_have_done() {
+  python3 -c "
+import json,sys
+texts=json.loads(sys.argv[1]); recent=texts[-4:] if len(texts)>=4 else texts
+for t in recent:
+    if 'outcome: done' in t or 'outcome:done' in t: print('1'); sys.exit(0)
+print('0')" "$1" 2>/dev/null || echo "0"
+}
+
+# comments_have_awaiting <comments_json> → "yes" if one of the last 3 comments
+# carries an awaiting-the-owner marker (the worker did its part and parked the
+# task on a human decision), else "no".
+comments_have_awaiting() {
+  python3 -c "
+import json,sys
+texts=json.loads(sys.argv[1]); recent=texts[-3:] if len(texts)>=3 else texts
+for t in recent:
+    for m in ['⏳ **Awaiting','Awaiting decision','Awaiting owner','⏳ Awaiting']:
+        if m in t: print('yes'); sys.exit(0)
+print('no')" "$1" 2>/dev/null || echo "no"
+}
+
 # ── Part A — supervise live worker sessions ──────────────────────────────────
 SESSIONS=$(tmux ls 2>/dev/null | cut -d: -f1 | grep -E "$SESSION_FILTER" || true)
 
@@ -185,7 +211,7 @@ while IFS= read -r sess; do
   tail=$(printf '%s' "$pane" | tail -n 25)
   hash=$(printf '%s' "$tail" | sha256sum 2>/dev/null | awk '{print $1}')
 
-  prev_hash=""; hash_since="$NOW"; strikes=0; stall_alerted=0; dialog_alerted=0
+  prev_hash=""; hash_since="$NOW"; strikes=0; stall_alerted=0; dialog_alerted=0; inprogress_alerted=0
   statefile="$STATE_DIR/${sess}.state"
   if [ -f "$statefile" ]; then . "$statefile" 2>/dev/null || true; fi
   write_state() {
@@ -195,6 +221,7 @@ while IFS= read -r sess; do
       echo "strikes='${strikes}'"
       echo "stall_alerted='${stall_alerted}'"
       echo "dialog_alerted='${dialog_alerted}'"
+      echo "inprogress_alerted='${inprogress_alerted}'"
     } > "$statefile" 2>/dev/null || true
   }
 
@@ -206,7 +233,7 @@ while IFS= read -r sess; do
       activity "supervisor: $sess startup-dialog → auto-Enter"
       dialog_alerted=1
     fi
-    hash_since="$NOW"; strikes=0; stall_alerted=0   # recovering — reset stall
+    hash_since="$NOW"; strikes=0; stall_alerted=0; inprogress_alerted=0   # recovering — reset stall
     write_state
     continue
   fi
@@ -221,19 +248,8 @@ while IFS= read -r sess; do
     activity "supervisor: timing out $sess (age=${age_min}min cap=${cap_min}min clickup=${clickup_task_id:-?})"
     if [ -n "$clickup_task_id" ]; then
       comments_json=$(fetch_comments_text "$clickup_task_id")
-      has_awaiting=$(python3 -c "
-import json,sys
-texts=json.loads(sys.argv[1]); recent=texts[-3:] if len(texts)>=3 else texts
-for t in recent:
-    for m in ['⏳ **Awaiting','Awaiting decision','Awaiting owner','⏳ Awaiting']:
-        if m in t: print('yes'); sys.exit(0)
-print('no')" "$comments_json" 2>/dev/null || echo "no")
-      has_done=$(python3 -c "
-import json,sys
-texts=json.loads(sys.argv[1]); recent=texts[-4:] if len(texts)>=4 else texts
-for t in recent:
-    if 'outcome: done' in t or 'outcome:done' in t: print('1'); sys.exit(0)
-print('0')" "$comments_json" 2>/dev/null || echo "0")
+      has_awaiting=$(comments_have_awaiting "$comments_json")
+      has_done=$(comments_have_done "$comments_json")
 
       if [ "$has_done" -gt 0 ]; then
         activity "supervisor: $clickup_task_id has outcome:done — setting in_review"
@@ -303,8 +319,41 @@ print(sum(1 for t in texts if 'Janitor timeout' in t and ('requeued' in t or 'bl
       else
         status=$(fetch_status "$clickup_task_id")
         if [ "$status" = "in_progress" ]; then
-          alert error "worker ${slug} stalled >${STALL_MIN}min but ClickUp=in_progress — NOT killing, check manually"
-          activity "supervisor: $sess stall but ClickUp in_progress → alert-only (no kill)"
+          # Static pane + in_progress past the stall window is more often a GHOST
+          # than a hang: a worker that finished its work (and committed) but whose
+          # /done never flipped the status. The old branch alerted "check manually"
+          # on EVERY tick forever for that case. So first try to RESOLVE it from
+          # the worker's own comments — outcome:done → in_review, awaiting-marker →
+          # on_hold — and release the session either way (spawn-worker's orphan GC
+          # reaps the worktree on its next tick). Only a genuine unknown falls
+          # through, and that alerts ONCE (guard) then stays watch-only: the
+          # wall-cap (Phase 3) remains the sole kill-authority, which is what
+          # protects a legitimately long quiet model turn.
+          comments_json=$(fetch_comments_text "$clickup_task_id")
+          gh_done=$(comments_have_done "$comments_json")
+          gh_awaiting=$(comments_have_awaiting "$comments_json")
+          if [ "${gh_done:-0}" = "1" ]; then
+            activity "supervisor: $sess static+in_progress but outcome:done in comments → in_review + kill (ghost cleanup)"
+            "$CLICKUP" comment --task "$clickup_task_id" --text "🧹 Supervisor: pane static >${STALL_MIN}min, task still in_progress, but the last comment shows outcome:done — the worker finished and /done never flipped the status. Setting in_review and releasing the session (worktree GC'd on the next spawn tick)." 2>/dev/null || true
+            "$CLICKUP" update --task "$clickup_task_id" --status in_review 2>/dev/null || true
+            alert info "worker ${slug} finished (outcome:done) but was stuck in_progress — auto-flipped to in_review, slot released"
+            tmux kill-session -t "$sess" 2>/dev/null || true
+            rm -f "$statefile" 2>/dev/null || true
+            continue
+          elif [ "$gh_awaiting" = "yes" ]; then
+            activity "supervisor: $sess static+in_progress but awaiting marker → on_hold + kill"
+            "$CLICKUP" comment --task "$clickup_task_id" --text "🧹 Supervisor: pane static >${STALL_MIN}min, task in_progress, awaiting-owner marker in the comments — setting on_hold and releasing the session." 2>/dev/null || true
+            "$CLICKUP" update --task "$clickup_task_id" --status on_hold 2>/dev/null || true
+            alert info "worker ${slug} is awaiting the owner but was stuck in_progress — auto-flipped to on_hold, slot released"
+            tmux kill-session -t "$sess" 2>/dev/null || true
+            rm -f "$statefile" 2>/dev/null || true
+            continue
+          fi
+          if [ "${inprogress_alerted:-0}" != "1" ]; then
+            alert warn "worker ${slug} quiet >${STALL_MIN}min, task=in_progress, no outcome:done — watching (wall-cap kills a real hang)"
+            activity "supervisor: $sess stall but ClickUp in_progress, no outcome → alert-once + watch-only (wall-cap = kill-authority)"
+            inprogress_alerted=1
+          fi
           strikes=1   # stay in watch mode, don't re-escalate every tick
         else
           alert error "worker ${slug} stalled >${STALL_MIN}min (ClickUp='${status:-?}') — killed for respawn"
@@ -317,7 +366,7 @@ print(sum(1 for t in texts if 'Janitor timeout' in t and ('requeued' in t or 'bl
     fi
     write_state   # keep original hash_since (do NOT reset to NOW)
   else
-    hash_since="$NOW"; strikes=0; stall_alerted=0
+    hash_since="$NOW"; strikes=0; stall_alerted=0; inprogress_alerted=0
     write_state
     log "ok: $sess healthy (pane changed, age=$(( age_sec / 60 ))min)"
   fi

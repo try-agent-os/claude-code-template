@@ -88,12 +88,38 @@ Score guide: 5=smooth, 4=minor friction, 3=workarounds needed, 2=partial, 1=bare
 
 If `$ARGUMENTS` is non-empty, use it as the override summary text instead of composing your own.
 
-## 2. Task status → in_review (NOT done — that's the owner's hand)
+## 2. Task status → in_review (or `done` for a no-op scheduled run)
 
-You finalize at `in_review` and hand the task to the owner. **Never set `done`/`complete` yourself** — the final close is the owner's after they review.
+Default: you finalize at `in_review` and hand the task to the owner. **Never set `done`/`complete` yourself for delegated work** — the final close is the owner's after they review.
+
+**Exception — a no-op scheduled monitor run auto-closes to `done`.** A scheduled
+cron check that produced **no commits** is a pure no-op report: there is nothing to
+review, so leaving it `in_review` clutters the review queue with a ghost task and —
+if `/done` races the supervisor — can strand it in a sticky `in_review`. Such a run
+closes to `done` directly. Keep `in_review` whenever there ARE commits (real work to
+review) or the task came from a human.
+
+Which slugs count as scheduled is a deployment setting: `AGENTOS_NOOP_SLUG_RE`
+(default `^scheduled-`). Set it to something unmatchable to disable the exception.
+The block below decides automatically from the env the launcher set — run it verbatim:
 
 ```bash
-scripts/clickup/clickup.sh update --task <CLICKUP_TASK_ID> --status in_review
+SLUG="${AGENTOS_WORKER_TASK_ID:-}"
+WT="${AGENTOS_WORKER_WORKTREE:-}"
+NOOP_RE="${AGENTOS_NOOP_SLUG_RE:-^scheduled-}"
+# Default to "there were commits": an unknown worktree or a missing origin/main
+# must NOT read as a no-op, or a run that DID commit would be auto-closed.
+HAD_COMMITS=1
+if [ -n "$WT" ] && [ -d "$WT" ] && git -C "$WT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  [ -z "$(git -C "$WT" log origin/main..HEAD --oneline 2>/dev/null)" ] && HAD_COMMITS=0
+fi
+if [ "$HAD_COMMITS" = 0 ] && printf '%s' "$SLUG" | grep -qE "$NOOP_RE"; then
+  # no-op scheduled run — nothing to review, auto-close
+  scripts/clickup/clickup.sh update --task <CLICKUP_TASK_ID> --status done
+  echo "no-op scheduled run → status=done (auto-closed, nothing to review)"
+else
+  scripts/clickup/clickup.sh update --task <CLICKUP_TASK_ID> --status in_review
+fi
 ```
 
 (If the list has no `in_review` status and the task was a pure no-op / nothing to review, `awaiting` is the fallback — but for any task with a real result, `in_review` + the branch-state comment above is the right terminal state.)
