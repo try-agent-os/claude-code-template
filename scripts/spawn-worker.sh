@@ -44,6 +44,12 @@ LAUNCH_CWD="${WORKER_WORK_DIR:-$REPO_ROOT}"
 CLAUDE="${CLAUDE:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 WORKER_DIR="${WORK_DIR}/logs/workers/${TASK_ID}"
 SESSION_NAME="worker-${TASK_ID}"
+# Per-spawn epoch — makes each worker's git branch unique (worker/<slug>-<epoch>)
+# so parallel/sequential respawns of the SAME slug never share one remote branch
+# and lose commits to a push-race / `-B` reset. The tmux SESSION_NAME and the
+# worktree PATH stay slug-based (idempotency + the orphan GC maps
+# session⇄worktree by slug); only the branch carries the epoch.
+WORKER_EPOCH="$(date +%s)"
 ACTIVITY_LOG_DIR="${WORK_DIR}/memory/worker-activity"
 CLAUDE_CONFIG_BASE="${CLAUDE_CONFIG_BASE:-/var/lib/agent-os/claude-config}"
 NOTIFY="${WORK_DIR}/scripts/notify-operator.sh"
@@ -104,7 +110,7 @@ git rebase --autostash origin/main 2>&1 >/dev/null || true
 # Why: workers + operator sharing ONE working tree caused (a) staging races,
 # (b) branch-stranding, (c) cross-task contamination. Fix: each worker that
 # runs in the MAIN repo (not a routed submodule) gets its own `git worktree`
-# on branch worker/<slug> cut from origin/main. The worker commits only inside
+# on branch worker/<slug>-<epoch> cut from origin/main. The worker commits only inside
 # its worktree; the merge back to main (rebase onto origin/main + atomic ff
 # `git push origin HEAD:main`) and the cleanup happen in the /done and /blocked
 # commands. The main tree (operator) is never checked out to a worker branch,
@@ -119,32 +125,81 @@ WORKER_WORKTREE=""
 if [ "$LAUNCH_CWD" = "$REPO_ROOT" ] && [ "${WORKER_NO_WORKTREE:-0}" != "1" ]; then
   WORKTREE_BASE="$(cd "$REPO_ROOT/.." && pwd)/.worktrees"
   WORKER_WORKTREE="${WORKTREE_BASE}/${TASK_ID}"
-  WORKER_BRANCH="worker/${TASK_ID}"
+  # Branch carries the per-spawn epoch → a unique remote ref per worker, so the
+  # /done ff-push and the `git push -u origin <branch>` backup never collide with
+  # a sibling/prior worker sharing the slug. The worktree path stays slug-based
+  # (reused each spawn; same-slug concurrency is already blocked by the tmux
+  # idempotency check above), which keeps the GC's session⇄worktree map simple.
+  WORKER_BRANCH="worker/${TASK_ID}-${WORKER_EPOCH}"
   mkdir -p "$WORKTREE_BASE"
   # Orphan GC: reap any worktree whose worker-<slug> tmux session is dead (a hard
   # kill by the supervisor skips the /done cleanup). Bounded, safe (only touches
   # worktrees with no live worker).
+  #
+  # EXCEPT worktrees marked `.agentos-undelivered`: /done's verify-gate writes that
+  # sentinel when the commits did NOT reach origin/main, then leaves via /blocked —
+  # which kills the session, i.e. exactly the "dead session" this GC keys on.
+  # Reaping there would delete the branch and orphan the commits — the very loss
+  # the gate exists to prevent. The skip self-clears: once the work lands in
+  # origin/main the sentinel no longer protects it and the next tick reaps normally.
   if [ -d "$WORKTREE_BASE" ]; then
     for wt in "$WORKTREE_BASE"/*; do
       [ -d "$wt" ] || continue
       orphan_slug="$(basename "$wt")"
-      if ! tmux has-session -t "worker-${orphan_slug}" 2>/dev/null; then
-        git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
-        git branch -D "worker/${orphan_slug}" 2>/dev/null || true
-        echo "spawn-worker: reaped orphan worktree $wt (no live session)" >&2
+      tmux has-session -t "worker-${orphan_slug}" 2>/dev/null && continue
+      if [ -f "$wt/.agentos-undelivered" ]; then
+        wt_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)"
+        if [ -n "$wt_head" ] && ! git merge-base --is-ancestor "$wt_head" origin/main 2>/dev/null; then
+          echo "spawn-worker: KEEPING $wt — undelivered commits not in origin/main (needs manual re-merge)" >&2
+          continue
+        fi
+        echo "spawn-worker: $wt was undelivered but its commits are now in origin/main — reaping" >&2
       fi
+      git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
+      # Branches are epoch-suffixed (worker/<slug>-<epoch>); reap every local branch
+      # for this slug plus the legacy bare name for back-compat.
+      # HARD INVARIANT: never delete a branch whose tip is not yet in origin/main —
+      # the local ref is the last handle on those commits, and the glob below spans
+      # epochs, so reaping a LATER run on this slug would otherwise orphan an
+      # EARLIER preserved run's work.
+      for b in $(git branch --list "worker/${orphan_slug}" "worker/${orphan_slug}-*" \
+                   --format '%(refname:short)' 2>/dev/null); do
+        if git merge-base --is-ancestor "$b" origin/main 2>/dev/null; then
+          git branch -D "$b" 2>/dev/null || true
+        else
+          echo "spawn-worker: KEEPING branch $b — commits not in origin/main" >&2
+        fi
+      done
+      echo "spawn-worker: reaped orphan worktree $wt (no live session)" >&2
     done
     git worktree prune 2>/dev/null || true
   fi
-  # Idempotent prune of any stale worktree/branch for this slug.
-  if git worktree list --porcelain 2>/dev/null | grep -qx "worktree ${WORKER_WORKTREE}"; then
-    git worktree remove --force "$WORKER_WORKTREE" 2>/dev/null || true
+  # A preserved undelivered worktree on this slug's path: a requeue of the SAME task
+  # must not bulldoze the prior run's unmerged commits. Move it aside (`git worktree
+  # move` keeps the metadata + branch intact) so the work survives AND the path frees
+  # up for the new spawn. Only the path is sacrificed, never the commits.
+  if [ -f "${WORKER_WORKTREE}/.agentos-undelivered" ]; then
+    KEEP="${WORKER_WORKTREE}.undelivered-${WORKER_EPOCH}"
+    if git worktree move "$WORKER_WORKTREE" "$KEEP" 2>/dev/null; then
+      echo "spawn-worker: preserved undelivered worktree → $KEEP (branch kept for re-merge)" >&2
+    else
+      # Path stays occupied → the prune below skips it (sentinel still there) and the
+      # `worktree add` falls into the existing shared-tree fallback.
+      echo "spawn-worker: WARN could not move undelivered worktree $WORKER_WORKTREE — keeping it, worker falls back to shared tree" >&2
+    fi
   fi
-  git worktree prune 2>/dev/null || true
-  rm -rf "$WORKER_WORKTREE" 2>/dev/null || true
-  # -B resets worker/<slug> to origin/main even if the branch lingered; --force
-  # tolerates a reused path. Fall back to the shared tree only if worktree add
-  # genuinely fails — better a working worker than a dead queue.
+  # Idempotent prune of any stale worktree/branch for this slug.
+  # Guarded: never prune a path still holding undelivered commits.
+  if [ ! -f "${WORKER_WORKTREE}/.agentos-undelivered" ]; then
+    if git worktree list --porcelain 2>/dev/null | grep -qx "worktree ${WORKER_WORKTREE}"; then
+      git worktree remove --force "$WORKER_WORKTREE" 2>/dev/null || true
+    fi
+    git worktree prune 2>/dev/null || true
+    rm -rf "$WORKER_WORKTREE" 2>/dev/null || true
+  fi
+  # -B (re)creates worker/<slug>-<epoch> at origin/main; the epoch makes it fresh.
+  # --force tolerates a reused path. Fall back to the shared tree only if worktree
+  # add genuinely fails — better a working worker than a dead queue.
   if git worktree add --force -B "$WORKER_BRANCH" "$WORKER_WORKTREE" origin/main >/dev/null 2>&1; then
     LAUNCH_CWD="$WORKER_WORKTREE"
     echo "spawn-worker: isolated worktree $WORKER_WORKTREE on $WORKER_BRANCH" >&2
