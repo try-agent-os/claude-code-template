@@ -11,8 +11,23 @@
  *
  * With .mcp.json:
  *   { "claude-peers": { "command": "bun", "args": ["./server.ts"] } }
+ *
+ * Environment:
+ *   CLAUDE_PEERS_SLUG     — optional persistent slug claimed at registration
+ *                           (explicit override; used verbatim if set)
+ *   CLAUDE_PEERS_HOST_ID  — short host alias for the slug prefix (e.g. "mac",
+ *                           "hub"). Defaults to the first label of
+ *                           os.hostname(), lowercased ("Mac.home" -> "mac").
+ *   CLAUDE_PEERS_AGENT    — agent name (e.g. "operator", "sysadmin"). When set
+ *                           (and CLAUDE_PEERS_SLUG is not) the slug becomes
+ *                           `${host_id}:${agent}`. When unset, the agent name is
+ *                           auto-derived from CLAUDE_PROJECT_DIR (.../agents/<name>),
+ *                           so agents are host-aware with zero per-agent env —
+ *                           Claude Code only forwards a curated env allowlist to
+ *                           stdio MCP servers, so injected vars are unreliable.
  */
 
+import os from "os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -24,6 +39,7 @@ import type {
   Peer,
   RegisterResponse,
   PollMessagesResponse,
+  ClaimSlugResponse,
   Message,
 } from "./shared/types.ts";
 import {
@@ -35,7 +51,12 @@ import {
 // --- Configuration ---
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
-const BROKER_URL = `http://127.0.0.1:${BROKER_PORT}`;
+// Broker host. Defaults to loopback (local broker). Set CLAUDE_PEERS_HOST to a
+// reachable address (e.g. a tailnet/VPN IP such as 100.x.y.z) to connect this MCP
+// client to a central broker on another host over the mesh. When set to a
+// remote host, do NOT rely on broker auto-launch — run the broker on that host.
+const BROKER_HOST = process.env.CLAUDE_PEERS_HOST ?? "127.0.0.1";
+const BROKER_URL = `http://${BROKER_HOST}:${BROKER_PORT}`;
 const POLL_INTERVAL_MS = 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const BROKER_SCRIPT = new URL("./broker.ts", import.meta.url).pathname;
@@ -73,14 +94,10 @@ async function ensureBroker(): Promise<void> {
   log("Starting broker daemon...");
   const proc = Bun.spawn(["bun", BROKER_SCRIPT], {
     stdio: ["ignore", "ignore", "inherit"],
-    // Detach so the broker survives if this MCP server exits
-    // On macOS/Linux, the broker will keep running
   });
 
-  // Unref so this process can exit without waiting for the broker
   proc.unref();
 
-  // Wait for it to come up
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 200));
     if (await isBrokerAlive()) {
@@ -94,7 +111,6 @@ async function ensureBroker(): Promise<void> {
 // --- Utility ---
 
 function log(msg: string) {
-  // MCP stdio servers must only use stderr for logging (stdout is the MCP protocol)
   console.error(`[claude-peers] ${msg}`);
 }
 
@@ -118,7 +134,6 @@ async function getGitRoot(cwd: string): Promise<string | null> {
 
 function getTty(): string | null {
   try {
-    // Try to get the parent's tty from the process tree
     const ppid = process.ppid;
     if (ppid) {
       const proc = Bun.spawnSync(["ps", "-o", "tty=", "-p", String(ppid)]);
@@ -136,13 +151,35 @@ function getTty(): string | null {
 // --- State ---
 
 let myId: PeerId | null = null;
+let mySlug: string | null = null;
 let myCwd = process.cwd();
 let myGitRoot: string | null = null;
+// os.hostname() — the real machine host, used by the broker for host-aware
+// liveness (PID check vs heartbeat TTL). Separate concept from the slug prefix.
+const myHost = os.hostname();
+// Short host alias used only as the slug prefix. Prefer CLAUDE_PEERS_HOST_ID;
+// otherwise normalise os.hostname() to its first label, lowercased
+// (e.g. "hub" stays "hub", "Mac.home" -> "mac"). This keeps slugs
+// short and stable even when no env is injected (Claude Code passes only a
+// curated env allowlist to stdio MCP servers, so we cannot rely on it).
+const myHostId =
+  process.env.CLAUDE_PEERS_HOST_ID || myHost.split(".")[0].toLowerCase();
+
+// Derive the agent name when CLAUDE_PEERS_AGENT is not set, from
+// CLAUDE_PROJECT_DIR (reliably present in the MCP child env) when it points at
+// an `.../agents/<name>` directory — e.g. ".../agents/operator" -> "operator".
+// Returns undefined for non-agent sessions (workers, ad-hoc dirs), leaving them
+// slug-less, exactly as before.
+function deriveAgentName(): string | undefined {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR || myCwd;
+  const m = projectDir.match(/\/agents\/([a-z0-9][a-z0-9-]*)\/?$/);
+  return m ? m[1].toLowerCase() : undefined;
+}
 
 // --- MCP Server ---
 
 const mcp = new Server(
-  { name: "claude-peers", version: "0.1.0" },
+  { name: "claude-peers", version: "0.2.0" },
   {
     capabilities: {
       experimental: { "claude/channel": {} },
@@ -152,13 +189,17 @@ const mcp = new Server(
 
 IMPORTANT: When you receive a <channel source="claude-peers" ...> message, RESPOND IMMEDIATELY. Do not wait until your current task is finished. Pause what you are doing, reply to the message using send_message, then resume your work. Treat incoming peer messages like a coworker tapping you on the shoulder — answer right away, even if you're in the middle of something.
 
-Read the from_id, from_summary, and from_cwd attributes to understand who sent the message. Reply by calling send_message with their from_id.
+Read the from_id, from_slug, from_host, from_summary, and from_cwd attributes to understand who sent the message. Slugs follow the scheme <host>:<agent> (e.g. "hub:operator", "mac:operator"). Reply by calling send_message with their from_id or from_slug.
 
 Available tools:
+- get_my_id: Get your peer ID, slug, and connection info
+- claim_slug: Claim a persistent slug (stable across restarts, e.g. "operator")
 - list_peers: Discover other Claude Code instances (scope: machine/directory/repo)
-- send_message: Send a message to another instance by ID
+- send_message: Send a message to another instance by peer ID or slug
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - check_messages: Manually check for new messages
+
+You can send messages using slugs (e.g., send_message(to_id: "operator", ...)) instead of random peer IDs. Slugs persist across restarts.
 
 When you start, proactively call set_summary to describe what you're working on. This helps other instances understand your context.`,
   }
@@ -168,9 +209,34 @@ When you start, proactively call set_summary to describe what you're working on.
 
 const TOOLS = [
   {
+    name: "get_my_id",
+    description:
+      "Get this peer's ID, slug, and connection info. Useful for self-identification in reports.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "claim_slug",
+    description:
+      'Claim a persistent slug for this peer session. The slug persists across restarts — when re-registering with the same slug, pending messages are inherited. If the slug is already claimed by this peer, this is a no-op success.',
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        slug: {
+          type: "string" as const,
+          description:
+            'Persistent identifier following the <host>:<agent> scheme (e.g. "hub:operator", "mac:operator"). Lowercase alphanumeric + dashes, with at most one colon separator, max 64 chars. Plain slugs without a colon (e.g. "operator") also work for backward compatibility.',
+        },
+      },
+      required: ["slug"],
+    },
+  },
+  {
     name: "list_peers",
     description:
-      "List other Claude Code instances running on this machine. Returns their ID, working directory, git repo, and summary.",
+      "List other Claude Code instances running on this machine. Returns their ID, slug, working directory, git repo, and summary.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -187,13 +253,14 @@ const TOOLS = [
   {
     name: "send_message",
     description:
-      "Send a message to another Claude Code instance by peer ID. The message will be pushed into their session immediately via channel notification.",
+      'Send a message to another Claude Code instance by peer ID or slug. The message will be pushed into their session immediately via channel notification. You can use a slug (e.g. "operator") instead of the random peer ID.',
     inputSchema: {
       type: "object" as const,
       properties: {
         to_id: {
           type: "string" as const,
-          description: "The peer ID of the target Claude Code instance (from list_peers)",
+          description:
+            'The peer ID or slug of the target Claude Code instance (from list_peers)',
         },
         message: {
           type: "string" as const,
@@ -239,6 +306,72 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
   switch (name) {
+    case "get_my_id": {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                id: myId,
+                slug: mySlug,
+                host: myHost,
+                host_id: myHostId,
+                cwd: myCwd,
+                pid: process.pid,
+                tty: getTty(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    case "claim_slug": {
+      const { slug } = args as { slug: string };
+      if (!myId) {
+        return {
+          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await brokerFetch<ClaimSlugResponse>("/claim-slug", {
+          id: myId,
+          slug,
+        });
+        if (!result.ok) {
+          return {
+            content: [
+              { type: "text" as const, text: `Failed to claim slug: ${result.error}` },
+            ],
+            isError: true,
+          };
+        }
+        mySlug = result.slug;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Slug "${result.slug}" claimed successfully. Peers can now reach you via this slug.`,
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error claiming slug: ${e instanceof Error ? e.message : String(e)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
     case "list_peers": {
       const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo";
       try {
@@ -263,9 +396,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const lines = peers.map((p) => {
           const parts = [
             `ID: ${p.id}`,
-            `PID: ${p.pid}`,
-            `CWD: ${p.cwd}`,
           ];
+          if (p.slug) parts.push(`Slug: ${p.slug}`);
+          if (p.host) parts.push(`Host: ${p.host}`);
+          parts.push(`PID: ${p.pid}`);
+          parts.push(`CWD: ${p.cwd}`);
           if (p.git_root) parts.push(`Repo: ${p.git_root}`);
           if (p.tty) parts.push(`TTY: ${p.tty}`);
           if (p.summary) parts.push(`Summary: ${p.summary}`);
@@ -408,9 +543,10 @@ async function pollAndPushMessages() {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
 
     for (const msg of result.messages) {
-      // Look up the sender's info for context
       let fromSummary = "";
       let fromCwd = "";
+      let fromSlug = "";
+      let fromHost = "";
       try {
         const peers = await brokerFetch<Peer[]>("/list-peers", {
           scope: "machine",
@@ -421,29 +557,31 @@ async function pollAndPushMessages() {
         if (sender) {
           fromSummary = sender.summary;
           fromCwd = sender.cwd;
+          fromSlug = sender.slug ?? "";
+          fromHost = sender.host ?? "";
         }
       } catch {
-        // Non-critical, proceed without sender info
+        // Non-critical
       }
 
-      // Push as channel notification — this is what makes it immediate
       await mcp.notification({
         method: "notifications/claude/channel",
         params: {
           content: msg.text,
           meta: {
             from_id: msg.from_id,
+            from_slug: fromSlug,
             from_summary: fromSummary,
             from_cwd: fromCwd,
+            from_host: fromHost,
             sent_at: msg.sent_at,
           },
         },
       });
 
-      log(`Pushed message from ${msg.from_id}: ${msg.text.slice(0, 80)}`);
+      log(`Pushed message from ${msg.from_id}${fromSlug ? ` (${fromSlug})` : ""}: ${msg.text.slice(0, 80)}`);
     }
   } catch (e) {
-    // Broker might be down temporarily, don't crash
     log(`Poll error: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
@@ -451,19 +589,32 @@ async function pollAndPushMessages() {
 // --- Startup ---
 
 async function main() {
-  // 1. Ensure broker is running
   await ensureBroker();
 
-  // 2. Gather context
   myCwd = process.cwd();
   myGitRoot = await getGitRoot(myCwd);
   const tty = getTty();
 
+  // Slug construction (precedence):
+  //   1. CLAUDE_PEERS_SLUG set        -> use verbatim (manual override / back-compat)
+  //   2. agent name resolved          -> `${myHostId}:${agent}` (e.g. hub:operator)
+  //      where agent = CLAUDE_PEERS_AGENT, else derived from CLAUDE_PROJECT_DIR
+  //      (.../agents/<name>). host-id = CLAUDE_PEERS_HOST_ID or normalised hostname.
+  //   3. no agent resolvable          -> no slug (null), as before (workers, ad-hoc)
+  const explicitSlug = process.env.CLAUDE_PEERS_SLUG || undefined;
+  const agent = process.env.CLAUDE_PEERS_AGENT || deriveAgentName();
+  const envSlug = explicitSlug ?? (agent ? `${myHostId}:${agent}` : undefined);
+
   log(`CWD: ${myCwd}`);
   log(`Git root: ${myGitRoot ?? "(none)"}`);
   log(`TTY: ${tty ?? "(unknown)"}`);
+  log(`Host: ${myHost} (host-id alias: ${myHostId})`);
+  if (explicitSlug) {
+    log(`Slug (from CLAUDE_PEERS_SLUG): ${envSlug}`);
+  } else if (agent) {
+    log(`Slug (host:agent): ${envSlug}`);
+  }
 
-  // 3. Generate initial summary via gpt-5.4-nano (non-blocking, best-effort)
   let initialSummary = "";
   const summaryPromise = (async () => {
     try {
@@ -484,21 +635,21 @@ async function main() {
     }
   })();
 
-  // Wait briefly for summary, but don't block startup
   await Promise.race([summaryPromise, new Promise((r) => setTimeout(r, 3000))]);
 
-  // 4. Register with broker
   const reg = await brokerFetch<RegisterResponse>("/register", {
     pid: process.pid,
     cwd: myCwd,
     git_root: myGitRoot,
     tty,
     summary: initialSummary,
+    slug: envSlug,
+    host: os.hostname(),
   });
   myId = reg.id;
-  log(`Registered as peer ${myId}`);
+  mySlug = reg.slug ?? null;
+  log(`Registered as peer ${myId}${mySlug ? ` (slug: ${mySlug})` : ""}`);
 
-  // If summary generation is still running, update it when done
   if (!initialSummary) {
     summaryPromise.then(async () => {
       if (initialSummary && myId) {
@@ -512,14 +663,11 @@ async function main() {
     });
   }
 
-  // 5. Connect MCP over stdio
   await mcp.connect(new StdioServerTransport());
   log("MCP connected");
 
-  // 6. Start polling for inbound messages
   const pollTimer = setInterval(pollAndPushMessages, POLL_INTERVAL_MS);
 
-  // 7. Start heartbeat
   const heartbeatTimer = setInterval(async () => {
     if (myId) {
       try {
@@ -530,7 +678,6 @@ async function main() {
     }
   }, HEARTBEAT_INTERVAL_MS);
 
-  // 8. Clean up on exit
   const cleanup = async () => {
     clearInterval(pollTimer);
     clearInterval(heartbeatTimer);
