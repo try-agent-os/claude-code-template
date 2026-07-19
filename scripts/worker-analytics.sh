@@ -46,7 +46,13 @@ while [[ $# -gt 0 ]]; do
     --partial)      FILTER="partial"; USE_CLICKUP=1; shift ;;
     --clickup)      USE_CLICKUP=1; shift ;;
     --last-N-days|--last-n-days|--days)
-                    LAST_N_DAYS="${2:-}"; shift 2 ;;
+                    # NB: `shift 2` with only one arg left fails without shifting
+                    # (no `set -e`), so the loop would spin forever on a trailing
+                    # `--days` with no value. Require the value explicitly.
+                    if [[ $# -lt 2 ]]; then
+                      echo "worker-analytics: $1 requires a value (number of days)" >&2; exit 2
+                    fi
+                    LAST_N_DAYS="$2"; shift 2 ;;
     --last-N-days=*|--last-n-days=*|--days=*)
                     LAST_N_DAYS="${1#*=}"; shift ;;
     -h|--help)
