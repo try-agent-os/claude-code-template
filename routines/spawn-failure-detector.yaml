@@ -1,0 +1,32 @@
+# spawn-failure-detector — catch a CROSS-TASK worker spawn outage that a
+# per-slug crash detector is structurally blind to.
+#
+# A per-slug circuit breaker blocks a task only after the SAME slug crashes N
+# times. A host- or CLI-level spawn outage makes MANY DIFFERENT tasks each fail
+# to boot exactly ONCE ("spawn-failed: ... never booted") — so no slug reaches
+# its streak and nothing trips. Today that is silent: the orphan-sweep simply
+# resets each task to `todo`. This probe reads memory/worker-errors and alerts
+# ONLY when a NEW cluster of >= 3 distinct boot-failures appears in a 24h window
+# (anchored on the newest event ts → no re-alert flood on a standing cluster).
+#
+# Every 15 min, so an overnight outage is surfaced within the hour — before the
+# per-slug crash streak quietly starts blocking real tasks at dawn.
+name: spawn-failure-detector
+description: Detect a cross-task worker spawn outage (>=3 distinct workers fail to boot in 24h) that the per-slug crash detector misses, and alert once per cluster with the likely cause.
+tags:
+  - script
+  - infra
+  - monitoring
+schedule: "*/15 * * * *"
+timeout_sec: 60
+max_active_runs: 1
+# Idempotent monitoring routine: a DAG retry is pointless — the next tick
+# re-checks anyway, and retrying on a non-zero exit only risks duplicating the
+# alert. Alert dedup lives in the script itself (state transition on the newest
+# event timestamp).
+retry_policy:
+  limit: 0
+steps:
+  - name: probe
+    command: /bin/bash /opt/agent-os/claude/scripts/spawn-failure-detector.sh
+    working_dir: /opt/agent-os/claude
