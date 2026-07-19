@@ -3,6 +3,12 @@
   "//": "Project-scope settings — committed to repo. Loaded by Claude Code when cwd is at or under this repo's root.",
   "//layering": "Stacked WITH managed-settings.json (highest precedence) and ~/.claude/settings.json (user defaults). Arrays merge across scopes; scalars take most-specific.",
 
+  "//statusLine": "Shows model + context fill (ctx N% (used/window)) + cwd. The ' !' / ' !!' markers at >=70% / >=85% make a bloating session obvious at a glance in a tmux pane — the same signal operator-watchdog.sh block (C) restarts on.",
+  "statusLine": {
+    "type": "command",
+    "command": "${CLAUDE_PROJECT_DIR}/.claude/statusline.py"
+  },
+
   "permissions": {
     "//": "Project-specific deny/ask/allow patterns. Catastrophic patterns (rm -rf /, fork bomb) live in managed-settings.json — do not duplicate here.",
 

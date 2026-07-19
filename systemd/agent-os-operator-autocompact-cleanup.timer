@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly cleanup of operator-autocompact snapshots
+Documentation=https://github.com/try-agent-os/claude-code-template/blob/main/scripts/operator-autocompact/README.md
+Requires=agent-os-operator-autocompact-cleanup.service
+
+[Timer]
+# Once a day at 03:30 UTC. Quiet hours, no contention with detector.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=agent-os-operator-autocompact-cleanup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=AgentOS operator-autocompact snapshot retention (delete >7d)
+Documentation=https://github.com/try-agent-os/claude-code-template/blob/main/scripts/operator-autocompact/README.md
+
+[Service]
+Type=oneshot
+User=agent-os
+Group=agent-os
+ExecStart={INSTALL_ROOT}/claude/scripts/operator-autocompact/cleanup-snapshots.sh
+StandardOutput=journal
+StandardError=journal

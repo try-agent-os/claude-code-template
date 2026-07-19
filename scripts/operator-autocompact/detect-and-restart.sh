@@ -48,6 +48,9 @@ TG_DB="${OPERATOR_AUTOCOMPACT_TG_DB:-$_AC_REPO/plugins/telegram/messages.db}"
 CHAT_ID="${OPERATOR_CHAT_ID:-}"
 AGENT_USER="${OPERATOR_AGENT_USER:-agent-os}"
 OPERATOR_UNIT="${OPERATOR_UNIT:-agent-os-operator.service}"
+# Operator tmux session name — env-overridable so the SAME script drives
+# per-instance detectors. Default "operator" matches the shipped unit.
+OPERATOR_SESSION="${OPERATOR_TMUX_SESSION:-operator}"
 
 THRESHOLD_MIN="${AUTOCOMPACT_THRESHOLD_MIN:-10}"
 COOLDOWN_MIN="${AUTOCOMPACT_COOLDOWN_MIN:-15}"
@@ -66,6 +69,33 @@ mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 
 log() {
   printf '%s %s\n' "$(date -u -Iseconds)" "$*" >> "$LOG_FILE"
+}
+
+# Last IN created_at for $CHAT_ID, via python3's stdlib sqlite3 module rather
+# than the sqlite3 CLI — the CLI is not installed on a minimal host, and the
+# template already depends on python3. Read-only open; empty stdout on any
+# failure (callers treat empty as "no activity recorded").
+tg_last_in() {
+  [ -n "$CHAT_ID" ] || return 0
+  python3 - "$TG_DB" "$CHAT_ID" 2>/dev/null <<'PYEOF' || true
+import sqlite3, sys
+db_path, chat_id = sys.argv[1], sys.argv[2]
+try:
+    chat_id = int(chat_id)
+except ValueError:
+    sys.exit(0)
+try:
+    con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=2)
+    row = con.execute(
+        "SELECT MAX(created_at) FROM messages WHERE chat_id=? AND direction='in'",
+        (chat_id,),
+    ).fetchone()
+    con.close()
+    if row and row[0]:
+        sys.stdout.write(str(row[0]))
+except Exception:
+    pass
+PYEOF
 }
 
 is_quiet_hours() {
@@ -101,7 +131,7 @@ operator_pane_pid() {
     return 0
   fi
   sudo -u "$AGENT_USER" env TMUX_TMPDIR="$OP_TMUX_TMPDIR" \
-    tmux list-panes -t operator -F '#{pane_pid}' 2>/dev/null | head -1
+    tmux list-panes -t "$OPERATOR_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1
 }
 
 # True (0) if $1 has a descendant process whose comm is `claude` (root itself
@@ -170,7 +200,7 @@ if [ "$SMOKE" -eq 1 ]; then
   smoke_log "THRESHOLD_MIN=$THRESHOLD_MIN  COOLDOWN_MIN=$COOLDOWN_MIN"
 
   if [ -r "$TG_DB" ] && [ -n "$CHAT_ID" ]; then
-    LAST_IN_RAW=$(sqlite3 "$TG_DB" "SELECT MAX(created_at) FROM messages WHERE chat_id=$CHAT_ID AND direction='in';" 2>/dev/null || echo "")
+    LAST_IN_RAW=$(tg_last_in)
     smoke_log "TG_DB last IN from $CHAT_ID: $LAST_IN_RAW"
   fi
 
@@ -214,9 +244,7 @@ fi
 if [ "$LAST_IN_EPOCH" -eq 0 ] && [ -n "$CHAT_ID" ]; then
   SRC="messages.db"
   if [ -r "$TG_DB" ]; then
-    LAST_IN_RAW=$(sqlite3 "$TG_DB" \
-      "SELECT MAX(created_at) FROM messages WHERE chat_id=$CHAT_ID AND direction='in';" \
-      2>/dev/null || echo "")
+    LAST_IN_RAW=$(tg_last_in)
     if [ -n "$LAST_IN_RAW" ]; then
       LAST_IN_EPOCH=$(date -u -d "$LAST_IN_RAW" +%s 2>/dev/null || echo 0)
     fi
