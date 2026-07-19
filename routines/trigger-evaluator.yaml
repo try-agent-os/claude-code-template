@@ -1,0 +1,25 @@
+# trigger-evaluator — evaluate trigger rules against the event bus and file tasks.
+#
+# Runs every 5 min. Reads all enabled triggers from memory/triggers/*.yaml,
+# queries event-bus.db, and upserts a task in the task backend when a condition
+# is met. Upsert (not create) is what keeps a recurring condition from filing a
+# duplicate every five minutes — the dedup signature lives in the trigger rule.
+#
+# Token-free: pure bash + Python, no LLM invoked. This is the cheap always-on
+# half of the self-healing loop — it decides WHETHER work is needed; the worker
+# launcher (routines/workers.yaml) decides WHO does it.
+#
+# Backend-agnostic: task writes go through scripts/lib/task-queue.sh, so the
+# reference ClickUp backend can be swapped without touching this routine.
+name: trigger-evaluator
+description: Evaluate trigger rules from memory/triggers/ against the event bus. Upsert tasks in the task backend when conditions fire.
+tags:
+  - script
+  - infra
+schedule: "*/5 * * * *"
+timeout_sec: 60
+max_active_runs: 1
+steps:
+  - name: evaluate
+    command: /bin/bash /opt/agent-os/claude/scripts/trigger-evaluator-tick.sh
+    working_dir: /opt/agent-os/claude
