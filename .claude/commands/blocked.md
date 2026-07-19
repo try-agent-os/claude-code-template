@@ -94,12 +94,28 @@ If peer-send fails, fall back to `scripts/notify-operator.sh --source worker --s
 Operate from the MAIN repo (not cwd-inside the dir being removed). The remote branch
 you pushed in step 0 stays intact for pickup; only the LOCAL worktree + branch go.
 
+**Never on an undelivered worktree.** `/done`'s verify-gate routes here precisely when
+commits did NOT reach `origin/main`, leaving a `.agentos-undelivered` sentinel — so this
+is the one path where the local worktree and branch may be the last handle on the work
+(the remote push in step 0 is best-effort, and a failed push is exactly the correlated
+case). Removing them there turns a lost race into permanently orphaned commits. The
+guards below skip cleanup while the sentinel is present, and refuse to delete a branch
+whose tip is not yet an ancestor of `origin/main`.
+
 ```bash
 MAIN="${AGENTOS_WORKER_MAIN_REPO:-$(git rev-parse --show-toplevel)}"
-if [ -n "${AGENTOS_WORKER_WORKTREE:-}" ]; then
+if [ -f "${AGENTOS_WORKER_WORKTREE:-/nonexistent}/.agentos-undelivered" ]; then
+  echo "REFUSING cleanup: worktree holds undelivered commits (see .agentos-undelivered) — left for manual re-merge"
+elif [ -n "${AGENTOS_WORKER_WORKTREE:-}" ]; then
   git -C "$MAIN" worktree remove --force "$AGENTOS_WORKER_WORKTREE" 2>/dev/null || true
   git -C "$MAIN" worktree prune 2>/dev/null || true
-  [ -n "${AGENTOS_WORKER_BRANCH:-}" ] && git -C "$MAIN" branch -D "$AGENTOS_WORKER_BRANCH" 2>/dev/null || true
+  if [ -n "${AGENTOS_WORKER_BRANCH:-}" ]; then
+    if git -C "$MAIN" merge-base --is-ancestor "$AGENTOS_WORKER_BRANCH" origin/main 2>/dev/null; then
+      git -C "$MAIN" branch -D "$AGENTOS_WORKER_BRANCH" 2>/dev/null || true
+    else
+      echo "KEEPING branch $AGENTOS_WORKER_BRANCH — commits not in origin/main"
+    fi
+  fi
 fi
 tmux kill-session -t $(tmux display-message -p '#S')
 ```
