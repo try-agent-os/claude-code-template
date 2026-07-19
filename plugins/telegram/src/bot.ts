@@ -15,6 +15,14 @@ import {
 import { extractMediaUrl, processUrl, processVideo, transcribeVoice } from './media-pipeline.js';
 import { isLoginAdmin, isLoginPending, submitLogin } from './login-flow.js';
 import { isClearCommand, isClearAdmin, handleClear } from './clear-flow.js';
+import {
+  parseModelCommand,
+  parseModelCallback,
+  isModelAdmin,
+  handleModelSwitch,
+  labelForAlias,
+  modelKeyboard,
+} from './model-flow.js';
 import type { ChatType, IncomingMessageEvent, MediaType } from './types.js';
 
 export interface ReactionEvent {
@@ -358,6 +366,42 @@ export function createBot(token: string, options?: BotOptions): Bot {
       return; // handled here — do NOT dispatch /clear to the agent
     }
 
+    // /model interception (owner-only, private chat) — sibling of /clear above.
+    // Bare `/model` → inline model-picker buttons (taps handled in the
+    // callback_query handler below, never forwarded to the agent).
+    // `/model <alias>` → inject a NATIVE `/model <alias>` into the operator tmux
+    // session right away. In-place switch, no restart, MCP connections stay alive.
+    const modelCmd = chatType === 'private' && isModelAdmin(userId)
+      ? parseModelCommand(msg.text)
+      : null;
+    if (modelCmd) {
+      saveMessage({
+        telegram_message_id: msg.message_id, chat_id: chatId, chat_type: chatType,
+        chat_title: chatTitle, user_id: null, username, display_name: displayName,
+        text: msg.text!, direction: 'in', reply_to_message_id: msg.reply_to_message?.message_id ?? null,
+        media_type: null, file_path: null, file_name: null,
+      });
+      let ackText: string;
+      let sent;
+      if (modelCmd.kind === 'menu') {
+        ackText = 'Pick a model for the operator session:';
+        sent = await ctx.reply(ackText, { reply_markup: modelKeyboard() });
+      } else {
+        const result = await handleModelSwitch(modelCmd.alias);
+        ackText = result.ok
+          ? `✅ Model: ${labelForAlias(modelCmd.alias)} (native /model ${modelCmd.alias} — session alive).`
+          : `⚠️ Could not switch model: ${result.error ?? 'unknown error'}`;
+        sent = await ctx.reply(ackText);
+      }
+      saveMessage({
+        telegram_message_id: sent.message_id, chat_id: chatId, chat_type: chatType,
+        chat_title: chatTitle, user_id: null, username: null, display_name: null,
+        text: ackText, direction: 'out', reply_to_message_id: msg.message_id,
+        media_type: null, file_path: null, file_name: null,
+      });
+      return; // handled here — do NOT dispatch /model to the agent
+    }
+
     // Decide whether this message should trigger the agent. Private chats
     // always notify; groups only when explicitly addressed. Bot identity is
     // available via ctx.me after bot.init() — if it's somehow missing, fall
@@ -629,6 +673,47 @@ export function createBot(token: string, options?: BotOptions): Bot {
   });
 
   // Reaction updates (Bot API 7.0+)
+  // Inline-keyboard button taps (callback_query). Currently the only producer of
+  // inline buttons is the `/model` picker above, so a tap is handled entirely
+  // here: gate access with the SAME allowlist used for messages, inject the
+  // native `/model <alias>` into the operator tmux session, then edit the picker
+  // message into an ack (which also drops the keyboard so it can't be tapped
+  // twice). Unknown callback data is acknowledged and ignored — never forwarded.
+  bot.on('callback_query:data', async (ctx: Context) => {
+    const cq = ctx.callbackQuery!;
+    const userId = cq.from.id;
+    const chatType = (cq.message?.chat.type ?? 'private') as ChatType;
+    const data = cq.data ?? '';
+
+    if (!await gateAccess(ctx, userId, chatType)) {
+      try { await ctx.answerCallbackQuery({ text: 'Access denied.' }); } catch { /* ignore */ }
+      return;
+    }
+
+    const modelAlias = parseModelCallback(data);
+    if (modelAlias === null || !isModelAdmin(userId)) {
+      try { await ctx.answerCallbackQuery(); } catch { /* ignore */ }
+      return;
+    }
+
+    const label = labelForAlias(modelAlias);
+    const result = await handleModelSwitch(modelAlias);
+    const ackText = result.ok
+      ? `✅ Model: ${label} (native /model ${modelAlias} — session alive).`
+      : `⚠️ Could not switch model: ${result.error ?? 'unknown error'}`;
+    try {
+      await ctx.answerCallbackQuery({ text: result.ok ? `✓ ${label}` : '⚠️ Failed', show_alert: !result.ok });
+    } catch (err) {
+      console.error('[bot] answerCallbackQuery failed:', (err as Error).message);
+    }
+    // Lock the picker in: replacing the text also strips the inline keyboard.
+    try {
+      await ctx.editMessageText(ackText);
+    } catch {
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }); } catch { /* ignore */ }
+    }
+  });
+
   bot.on('message_reaction', async (ctx) => {
     const update = ctx.messageReaction;
     const chatId = update.chat.id;

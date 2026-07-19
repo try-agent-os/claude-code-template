@@ -58,7 +58,8 @@ tmux_inject_slash "$SOCKET" "$SESSION" "/model $ALIAS"
 rc=$?
 case "$rc" in
   0) : ;;  # verified & submitted — fall through to the Switch-model? confirm
-  2) log "typed /model $ALIAS but could NOT verify it registered (paste-swallow?) — not confirmed"; exit 2 ;;
+  2) log "typed /model $ALIAS but could NOT verify it registered / it got queued — not confirmed"; exit 2 ;;
+  3) log "session '$SESSION' stayed busy even after interrupt — NOT injected (would queue as a message)"; exit 3 ;;
   *) log "ERROR: tmux session '$SESSION' not found on socket '$SOCKET' — NOT injecting."; exit 1 ;;
 esac
 
