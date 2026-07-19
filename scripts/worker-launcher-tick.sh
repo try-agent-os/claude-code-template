@@ -51,7 +51,7 @@ fi
 
 # 2-7) Pick + launch (Python for JSON + template substitution)
 python3 - "$LAUNCHER" "$TEMPLATE" "$NOTIFY" "$REPO" "$ENV_FILE" <<'PYEOF'
-import json, os, pathlib, re, subprocess, sys, tempfile, urllib.request
+import json, os, pathlib, re, shutil, subprocess, sys, tempfile, urllib.request
 from datetime import datetime, timedelta, timezone
 
 LAUNCHER, TEMPLATE, NOTIFY, REPO, ENV_FILE = sys.argv[1:6]
@@ -122,6 +122,52 @@ else:
 if not todo:
     sys.exit(0)
 
+# --- Per-task dependency gate (declarative, no launcher change per new dep) ---
+# A task declares what it needs in its own description; the launcher skips it on
+# hosts that cannot serve it. Two kinds:
+#   Requires (host cmd): bin1[, bin2...]   -> must be on PATH here
+#   Requires (dep): dep1[, dep2...]        -> scripts/lib/dep-reachable.sh must pass
+# The point is routing, not failing: one shared queue across heterogeneous hosts
+# (e.g. only one box has `tdl`) self-routes, and a task whose dep is temporarily
+# down is SKIPPED this tick — not blocked — so it drains by itself once the dep
+# recovers. Writers declare these via scripts/lib/file-finding-task.sh
+# --requires-cmd/--requires-dep; keep the spelling in sync with that script.
+DEP_CHECK = os.path.join(REPO, "scripts", "lib", "dep-reachable.sh")
+
+def parse_task_deps(description: str) -> tuple:
+    """Parse dep declarations out of a task description -> (host_cmds, deps)."""
+    host_cmds, deps = [], []
+    for line in description.splitlines():
+        m_cmd = re.match(r"\s*Requires\s*\(host cmd\)\s*:\s*(.+)", line, re.IGNORECASE)
+        if m_cmd:
+            host_cmds.extend(c.strip() for c in m_cmd.group(1).split(",") if c.strip())
+        m_dep = re.match(r"\s*Requires\s*\(dep\)\s*:\s*(.+)", line, re.IGNORECASE)
+        if m_dep:
+            deps.extend(d.strip() for d in m_dep.group(1).split(",") if d.strip())
+    return host_cmds, deps
+
+def task_deps_satisfied(task_id: str, description: str) -> bool:
+    """True if every declared dep is available here. Prints the reason if not."""
+    host_cmds, deps = parse_task_deps(description)
+    for cmd in host_cmds:
+        if shutil.which(cmd) is None:
+            print(f"[worker-launcher] skip {task_id}: host cmd '{cmd}' not on PATH here",
+                  file=sys.stderr)
+            return False
+    if deps and not os.access(DEP_CHECK, os.X_OK):
+        # Fail OPEN: a missing checker must not silently strand the whole queue.
+        print(f"[worker-launcher] WARN {task_id} declares deps but {DEP_CHECK} "
+              f"is missing/not executable — not gating", file=sys.stderr)
+        return True
+    for dep in deps:
+        rc = subprocess.run(["/bin/bash", DEP_CHECK, dep], capture_output=True, text=True)
+        if rc.returncode != 0:
+            detail = rc.stderr.strip() or f"dep-reachable.sh exited {rc.returncode}"
+            print(f"[worker-launcher] skip {task_id}: dep '{dep}' unreachable — {detail}",
+                  file=sys.stderr)
+            return False
+    return True
+
 def pickable(t: dict) -> bool:
     name = t.get("name", "")
     raw_tags = t.get("tags", [])
@@ -153,6 +199,10 @@ def pickable(t: dict) -> bool:
                 return False
         except (TypeError, ValueError):
             pass
+    # DEPENDENCY GATE: applies to every task class (a `Scheduled:` task needing
+    # a missing binary is exactly the case this exists for).
+    if not task_deps_satisfied(t.get("id"), t.get("description") or ""):
+        return False
     # Scheduled cron-tasks — system-internal, keep priority-only gate.
     prio = t.get("priority")
     prio_id = prio.get("id") if prio else None
@@ -216,11 +266,12 @@ model = "claude-sonnet-4-6" if "sonnet" in hay else heavy_model
 # --- Desc contract: description = Context ¶¶ Scope ¶¶ Criteria ---
 # A "Criteria:" / "Acceptance Criteria:" header line starts the criteria block,
 # which runs to the end of desc or the next section header. Directive lines
-# (Timeout:, Working dir (cwd):) never belong to criteria.
+# (Timeout:, Working dir (cwd):, Requires (...)) never belong to criteria.
 CRIT_HEAD = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:Criteria|Acceptance Criteria)\s*:\s*(.*)$", re.IGNORECASE)
 NEXT_HEAD = re.compile(
-    r"^\s*(?:#{1,6}\s+\S|(?:Context|Scope|Timeout)\s*:|Working dir\s*\()", re.IGNORECASE)
+    r"^\s*(?:#{1,6}\s+\S|(?:Context|Scope|Timeout)\s*:|(?:Working dir|Requires)\s*\()",
+    re.IGNORECASE)
 
 def split_desc(desc: str):
     lines = desc.splitlines()

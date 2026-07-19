@@ -24,6 +24,16 @@
 # — that exact spelling is what worker-launcher-tick.sh greps for, so keep the
 # two in sync if you ever reword it.
 #
+# DEPENDENCIES (task -> right host): pass --requires-cmd <bin> and/or
+# --requires-dep <name> (both repeatable). They are written into the body as
+# "Requires (host cmd): ..." / "Requires (dep): ..." lines, which
+# worker-launcher-tick.sh parses: a host missing the binary, or a dep that
+# scripts/lib/dep-reachable.sh reports unreachable, SKIPS the task this tick
+# (with a reason on stderr) instead of picking it up and failing. One shared
+# queue therefore self-routes across heterogeneous hosts — e.g. a task needing
+# `tdl` is only ever picked up by a host that has it — with no launcher change
+# per new dependency. Same spelling caveat as the cwd line above.
+#
 # PRIORITY = blast radius (the auto-fix vs queue-for-bump gate):
 #   2 (high)  -> safe, reversible, repo-internal fix. The launcher auto-picks it
 #                (tasks need priority 1-2 AND tag auto-worker) -> the loop fixes
@@ -38,7 +48,8 @@
 # Usage:
 #   file-finding-task.sh --monitor <id> --key <signature> \
 #       --title "..." --desc "..." \
-#       [--priority 2|3] [--cwd /abs/path] [--list <list_id>] [--tag extra]...
+#       [--priority 2|3] [--cwd /abs/path] [--list <list_id>] [--tag extra]... \
+#       [--requires-cmd <bin>]... [--requires-dep <name>]...
 #
 # Config (env, same convention as clickup_upsert.py):
 #   REPO_ROOT        repo checkout (default: parent dir of this script's dir)
@@ -55,6 +66,7 @@ NEEDS_HUMAN="$REPO/scripts/lib/needs_human.py"
 
 MONITOR="" KEY="" TITLE="" DESC="" PRIO=3 CWD="" LIST="${CLICKUP_LIST_ID:-}"
 EXTRA_TAGS=()
+REQ_CMDS=() REQ_DEPS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --monitor)  MONITOR="$2"; shift 2 ;;
@@ -65,6 +77,8 @@ while [ $# -gt 0 ]; do
     --cwd)      CWD="$2"; shift 2 ;;
     --list)     LIST="$2"; shift 2 ;;
     --tag)      EXTRA_TAGS+=("$2"); shift 2 ;;
+    --requires-cmd) REQ_CMDS+=("$2"); shift 2 ;;
+    --requires-dep) REQ_DEPS+=("$2"); shift 2 ;;
     *) echo "file-finding-task: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
@@ -79,6 +93,19 @@ if [ -n "$CWD" ]; then
   DESC="${DESC}
 
 Working dir (cwd): ${CWD}"
+fi
+# Declare host/dep requirements into the body. Exact wording is load-bearing:
+# worker-launcher-tick.sh regexes for it (parse_task_deps).
+_join() { local out=""; local x; for x in "$@"; do out="${out:+$out, }$x"; done; echo "$out"; }
+if [ "${#REQ_CMDS[@]}" -gt 0 ]; then
+  DESC="${DESC}
+
+Requires (host cmd): $(_join "${REQ_CMDS[@]}")"
+fi
+if [ "${#REQ_DEPS[@]}" -gt 0 ]; then
+  DESC="${DESC}
+
+Requires (dep): $(_join "${REQ_DEPS[@]}")"
 fi
 # Provenance footer so a human sees this came from a monitor, with the dedup key.
 DESC="${DESC}
