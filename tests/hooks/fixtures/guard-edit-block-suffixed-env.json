@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/some/project/config/app.env"
+  },
+  "session_id": "test-session-020",
+  "_test": {
+    "hook": "guard-edit",
+    "expected_exit": 2,
+    "expected_stderr_contains": "env/secret file"
+  }
+}

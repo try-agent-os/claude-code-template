@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/private/tmp/scratchpad/notes.md"
+  },
+  "session_id": "test-session-022",
+  "_test": {
+    "hook": "guard-edit",
+    "expected_exit": 0
+  }
+}

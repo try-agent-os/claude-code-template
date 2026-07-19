@@ -24,10 +24,13 @@ case "$ABS_PATH" in
   *)     ABS_PATH="$(pwd)/${ABS_PATH}" ;;
 esac
 
-# .env files
+# .env files — both `.env` style (dotfile) and `*.env` style (e.g. /etc/agent-os/agent-os.env).
+# Allow `.env.example` / `.env.sample` / `.env.template` (commit-safe boilerplate, no secrets).
 case "$ABS_PATH" in
-  *"/.env"|*"/.env."*|*"/.envrc"|*"/.env.local"|*"/.env.production"|*"/.env.development")
-    block "Refused edit to .env file: $ABS_PATH. Use a secret store or .env.example template."
+  *.env.example|*.env.sample|*.env.template)
+    ;;
+  *"/.env"|*"/.env."*|*"/.envrc"|*"/.env.local"|*"/.env.production"|*"/.env.development"|*.env)
+    block "Refused edit to env/secret file: $ABS_PATH. Use a secret store or .env.example template."
     ;;
 esac
 
@@ -50,8 +53,12 @@ case "$ABS_PATH" in
     ;;
 esac
 
-# Conventional secrets dirs
+# Conventional secrets dirs.
+# NB: on macOS /tmp and /var resolve to /private/tmp and /private/var — the system
+# root /private/ is NOT a secrets dir, so exempt it before the */private/* match.
 case "$ABS_PATH" in
+  /private/tmp/*|/private/var/*)
+    ;;
   */secrets/*|*/private/*|*/.secrets/*)
     block "Refused edit inside secrets/ folder: $ABS_PATH."
     ;;

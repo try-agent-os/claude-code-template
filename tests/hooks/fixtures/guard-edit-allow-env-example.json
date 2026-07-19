@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/some/project/.env.example"
+  },
+  "session_id": "test-session-021",
+  "_test": {
+    "hook": "guard-edit",
+    "expected_exit": 0
+  }
+}
