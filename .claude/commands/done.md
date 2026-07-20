@@ -15,56 +15,20 @@ your commits never touch the operator's main tree. The merge back to `main` happ
 HERE, atomically, by fast-forward-pushing your branch straight to `origin/main`
 (no local checkout switch → zero contention with operator/sibling workers).
 
+The merge AND the verify-gate live in `scripts/worker-deliver.sh` — not inline here. Reason:
+the inline version was logically correct and still got walked past. The gate ran, printed
+`DELIVERY_STATUS=FAILED`, and the model continued into the done path anyway. A paragraph can
+be skipped; **an exit code has to be handled.** Run it verbatim:
+
 ```bash
-WT="${AGENTOS_WORKER_WORKTREE:-}"; BR="${AGENTOS_WORKER_BRANCH:-}"
 MAIN="${AGENTOS_WORKER_MAIN_REPO:-$(git rev-parse --show-toplevel)}"
-DELIVERY_STATUS="n/a"    # n/a (no code) | ok (HEAD in origin/main) | FAILED (orphaned)
-if [ -n "$WT" ] && [ -d "$WT" ]; then
-  cd "$WT"
-  if [ -n "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
-    git push -u origin "$BR"                       # unique per-worker branch — never races a sibling
-    merged=0
-    for i in 1 2 3 4 5; do                         # retry: sibling worker may push first
-      git fetch origin main
-      git rebase origin/main || { git rebase --abort 2>/dev/null; break; }
-      if git push origin HEAD:main; then merged=1; echo "MERGED $BR -> origin/main"; break; fi
-      sleep 2
-    done
-    # VERIFY GATE — a green /done must NOT be reported while ANY commit is missing
-    # from origin/main. Without it a lost ff-push race is indistinguishable from
-    # success: the worker reports `outcome: done`, the branch is orphaned, and the
-    # work is only found by hand days later (GitHub happily serves dangling commits
-    # by SHA, so even a commit link in the report looks healthy). The gate runs
-    # BEFORE the comment and BEFORE any cleanup: every commit still listed in
-    # `origin/main..HEAD` is by definition NOT delivered, so a non-empty list =
-    # FAILED. Never take a commit SHA for the report before this passes.
-    git fetch origin main -q 2>/dev/null || true
-    UNDELIVERED=""
-    for sha in $(git rev-list origin/main..HEAD 2>/dev/null); do
-      git merge-base --is-ancestor "$sha" origin/main 2>/dev/null || UNDELIVERED="$UNDELIVERED $sha"
-    done
-    if [ -z "$UNDELIVERED" ] && git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main 2>/dev/null; then
-      DELIVERY_STATUS="ok"; echo "DELIVERY OK: every commit is an ancestor of origin/main"
-    else
-      DELIVERY_STATUS="FAILED"
-      echo "DELIVERY FAILED: not in origin/main —$UNDELIVERED (branch '$BR' orphaned, work NOT delivered)"
-      # Sentinel: tells spawn-worker.sh's orphan GC that this worktree holds
-      # undelivered work and must NOT be reaped when this session dies (the GC keys
-      # on a dead tmux session, which /done is about to cause). Self-clearing: the
-      # GC reaps the worktree once the commits genuinely land in origin/main.
-      printf 'branch=%s\nhead=%s\nundelivered=%s\ntask=%s\nat=%s\n' \
-        "$BR" "$(git rev-parse HEAD)" "$UNDELIVERED" "${AGENTOS_WORKER_CLICKUP_TASK_ID:-unknown}" \
-        "$(date -u +%FT%TZ)" > "$WT/.agentos-undelivered"
-      git push -u origin "$BR" 2>/dev/null || true   # best-effort: keep work reachable from the remote too
-      [ -x "${MAIN}/scripts/notify-operator.sh" ] && "${MAIN}/scripts/notify-operator.sh" \
-        --source worker --severity warn \
-        --msg "worker ${AGENTOS_WORKER_TASK_ID:-$BR}: /done verify-gate FAILED — commits never reached main, branch '${BR}' orphaned, worktree preserved, needs a manual re-merge" \
-        2>/dev/null || true
-    fi
-  else
-    echo "no commits on $BR — nothing to merge"
-  fi
-fi
+"${MAIN}/scripts/worker-deliver.sh"; rc=$?
+case "$rc" in
+  0) DELIVERY_STATUS="ok"    ;;   # every commit is an ancestor of origin/main
+  2) DELIVERY_STATUS="n/a"   ;;   # nothing to deliver (no worktree / no commits)
+  *) DELIVERY_STATUS="FAILED";;   # 3 = commits NOT in origin/main; sentinel written
+esac
+echo "DELIVERY_STATUS=$DELIVERY_STATUS (worker-deliver.sh exit $rc)"
 ```
 
 Read `DELIVERY_STATUS` and let it steer the finalization below — it is the source of
@@ -86,6 +50,13 @@ truth for whether your code actually landed:
   `/blocked` posts `outcome: blocked` with the branch-tree link, sets status `blocked`
   (never `done` — a silent `done` on lost work is exactly the defect this gate exists to
   kill), and skips the worktree cleanup while the sentinel is present.
+
+  **This is not on your honour.** The comment transport refuses to POST any text containing
+  `outcome: done` while `.agentos-undelivered` exists — it dies non-zero and prints the
+  sentinel (`scripts/lib/delivery-guard.sh`, enforced in both `scripts/lib/task-queue.sh`
+  and the ClickUp CLI). So step 1 below is physically unavailable on a FAILED delivery; the
+  only publishable outcome is `blocked`. The guard self-clears: once the commits really are
+  in `origin/main`, the sentinel is removed and `done` posts normally.
 - **`n/a`** — no commits to merge (no-op / read-only run); nothing to deliver, proceed normally.
 
 (If `AGENTOS_WORKER_WORKTREE` is empty — a submodule-routed worker or the shared-tree

@@ -47,6 +47,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Backend-agnostic delivery gate (see scripts/lib/delivery-guard.sh). Sourced, not
+# reimplemented — the same function backs every task-queue adapter.
+# shellcheck source=../lib/delivery-guard.sh
+if [ -r "${SCRIPT_DIR}/../lib/delivery-guard.sh" ]; then
+  . "${SCRIPT_DIR}/../lib/delivery-guard.sh"
+else
+  delivery_guard_check() { :; }   # lib missing → never block the CLI outright
+fi
+
 # --- Constants --------------------------------------------------------------
 readonly API_BASE="https://api.clickup.com/api/v2"
 readonly DEFAULT_STATUSES="todo,in_progress,blocked"
@@ -369,6 +378,10 @@ cmd_comment() {
   done
   [[ -z "$task" ]] && die "comment: need --task <id>"
   [[ -z "$text" ]] && die "comment: need --text \"...\""
+  # Delivery gate: a worker whose commits never reached origin/main must not be able
+  # to publish `outcome: done`. The logic is backend-agnostic (scripts/lib/delivery-guard.sh)
+  # and is enforced here too, because /done posts through this CLI directly.
+  delivery_guard_check "$text" || die "comment: refused by the delivery guard (see above)"
   local body
   if [[ "$markdown" == "true" ]]; then
     local quill

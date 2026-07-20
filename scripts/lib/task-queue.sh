@@ -32,6 +32,16 @@ set -o pipefail
 TQ_REPO="${TQ_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 AGENTOS_TASK_BACKEND="${AGENTOS_TASK_BACKEND:-clickup}"
 
+# Delivery gate — applies to EVERY backend, which is why it lives here and not in an
+# adapter: a worker whose commits never reached origin/main must not be able to publish
+# `outcome: done` through any transport. See scripts/lib/delivery-guard.sh.
+# shellcheck source=./delivery-guard.sh
+if [ -r "${TQ_REPO}/scripts/lib/delivery-guard.sh" ]; then
+  . "${TQ_REPO}/scripts/lib/delivery-guard.sh"
+else
+  delivery_guard_check() { :; }
+fi
+
 # ---------------------------------------------------------------------------
 # Reference adapter: ClickUp (API v2)
 # ---------------------------------------------------------------------------
@@ -80,7 +90,7 @@ case "$AGENTOS_TASK_BACKEND" in
   clickup)
     tq_get_status()   { tq_clickup_get_status "$@"; }
     tq_set_status()   { tq_clickup_set_status "$@"; }
-    tq_comment()      { tq_clickup_comment "$@"; }
+    tq_comment()      { delivery_guard_check "${2:-}" || return 1; tq_clickup_comment "$@"; }
     tq_get_comments() { tq_clickup_get_comments "$@"; }
     ;;
   custom)
@@ -97,6 +107,10 @@ case "$AGENTOS_TASK_BACKEND" in
       fi
     done
     unset _fn
+    # Wrap the custom adapter's comment path in the delivery gate as well — a backend
+    # swap must not silently drop the `outcome: done` protection.
+    eval "$(declare -f tq_comment | sed '1s/^tq_comment/_tq_custom_comment/')"
+    tq_comment() { delivery_guard_check "${2:-}" || return 1; _tq_custom_comment "$@"; }
     ;;
   *)
     echo "[task-queue] unknown AGENTOS_TASK_BACKEND='${AGENTOS_TASK_BACKEND}' (expected: clickup|custom)" >&2
