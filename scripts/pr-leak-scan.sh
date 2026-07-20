@@ -30,10 +30,13 @@
 # SEV in CRITICAL (secrets) | HIGH (direct PII) | MEDIUM (paths/hosts/slugs to judge)
 #
 # EXIT CODES (binary verifier — the point of this script):
-#   0  CLEAN   — no matches
-#   2  LEAK    — at least one CRITICAL or HIGH match  -> block the PR
-#   3  REVIEW  — only MEDIUM matches -> a human/LLM judges (generic ref vs real leak)
-#   1  ERROR   — bad usage / unreadable or invalid config
+#   0  CLEAN       — no matches
+#   2  LEAK        — at least one CRITICAL or HIGH match  -> block the PR
+#   3  REVIEW      — only MEDIUM matches -> a human/LLM judges (generic ref vs real leak)
+#   4  NOT SCANNED — the input is not a valid diff (empty, or an API error body).
+#                    "Could not check" is NOT "clean": callers must treat 4 as
+#                    blocking, re-fetch the diff, and rescan. See the sanity gate below.
+#   1  ERROR       — bad usage / unreadable or invalid config
 #
 # Secret VALUES are never printed in full — only type + file:line + a masked excerpt
 # (first/last few chars). Identity matches show the matched line (that IS the finding),
@@ -69,6 +72,24 @@ if [ "$SRC" = "-" ] || [ "$SRC" = "/dev/stdin" ]; then
 elif [ ! -r "$SRC" ]; then
   echo "pr-leak-scan: cannot read diff '$SRC'" >&2
   exit 1
+fi
+
+# ---- sanity gate: "could not check" must never be encoded as "clean" ----------
+# A diff fetch can SUCCEED at the process level and still hand us something that
+# is not a diff: `gh pr diff` on a PR over 300 files exits 0 but writes the API
+# error text ("diff exceeded the maximum number of files") into the output. That
+# body has no added lines, so the scan finds nothing and — without this gate —
+# exits 0 CLEAN. The largest PR in the queue is exactly the one that would sail
+# through unreviewed. Exit 4 makes the absence of a check distinguishable from a
+# clean check; a caller that lumps 4 in with 0 has reintroduced the hole.
+#
+# Recovering a diff too big for the API — fetch it from a clone instead:
+#   gh repo clone <org/repo> /tmp/pr-<N> -- --quiet && cd /tmp/pr-<N> \
+#     && git fetch origin <head> <base> --quiet \
+#     && git diff origin/<base>...origin/<head> > /tmp/pr<N>.diff
+if [ ! -s "$SRC" ] || ! grep -q '^diff --git' "$SRC"; then
+  echo "NOT-SCANNED|invalid-diff|$SRC|not a git diff (empty, or an error body such as 'diff exceeded 300 files') — this is NOT a clean result" >&2
+  exit 4
 fi
 
 # Config discovery: explicit env wins, else repo root next to this script.

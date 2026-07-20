@@ -232,9 +232,32 @@ out="$("$SCANNER" /nonexistent/pr.diff 2>&1)"; rc=$?
 if [ "$rc" = 1 ]; then PASS=$((PASS+1)); echo "  ok   unreadable diff -> 1"
 else FAIL=$((FAIL+1)); echo "  FAIL unreadable diff -> exit $rc, want 1 ($out)"; fi
 
+# --- NOT SCANNED -> 4 (the fail-open hole this gate closes) ------------------
+# Input that is readable but is not a diff must NOT come back as CLEAN. A caller
+# that sees 0 concludes "no leaks"; the truth is "nothing was examined".
+check "empty input -> 4, not 0" 4 "" \
+  "NOT-SCANNED|invalid-diff"
+
+check "whitespace-only input -> 4" 4 "$(printf '\n\n  \n')"
+
+# The real-world shape: `gh pr diff` exits 0 on a >300-file PR and writes the API
+# error into the output file. Two lines of prose, no added lines, scans "clean".
+check "API error body is not a clean scan -> 4" 4 \
+  "$(printf '{\n  "message": "Sorry, the diff exceeded the maximum number of files (300)."\n}\n')" \
+  "NOT-SCANNED|invalid-diff"
+
+check "prose that mentions a diff is still not a diff -> 4" 4 \
+  "$(printf 'The diff --git line only counts at the start of a line.\n')"
+
+# A NOT SCANNED verdict must not be reachable for input that IS a diff, however
+# boring — otherwise the gate would block everything and get switched off.
+check "a valid but empty-of-findings diff is 0, not 4" 0 \
+  "$(d README.md '+nothing to see here')"
+
 # --- the shipped example config must be valid + identity-free ----------------
-if PR_LEAK_SCAN_CONFIG="$REPO_ROOT/.pr-leak-scan.example.json" \
-     "$SCANNER" /dev/null >/dev/null 2>&1; then
+if printf '%s' "$(d README.md '+ordinary line')" \
+     | PR_LEAK_SCAN_CONFIG="$REPO_ROOT/.pr-leak-scan.example.json" \
+       "$SCANNER" >/dev/null 2>&1; then
   PASS=$((PASS+1)); echo "  ok   .pr-leak-scan.example.json loads cleanly"
 else
   FAIL=$((FAIL+1)); echo "  FAIL .pr-leak-scan.example.json does not load"
