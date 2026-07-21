@@ -85,6 +85,8 @@ If your task needs Google Workspace, read the current status and transports of t
 ## EDIT DISCIPLINE (saves the most turns)
 - Before the FIRST `Edit` of a file: read it whole, write out ALL planned changes for it, apply them as ONE batch of edits.
 - Run the gates relevant to the change (affected tests, lint, typecheck / `bash -n`, `dagu dry`, `grep` for the expected line) after finishing EACH file — not once at the end.
+- **If the change FIXES A FAILURE (self-heal, guard, retry, dedup), a parse check is NOT a gate.** `bash -n` proves the file parses — it would go green just the same on a script that fixes nothing. The gate is **reproducing the failure and showing the delta baseline → fixed**: build a throwaway fixture (e.g. a bare origin + producer + live clone triad for a repo-sync fix — ~15 lines, ~3 sec), run it BEFORE the fix to capture the failing state, then AFTER. Paste BOTH halves into the task comment (`baseline behind: 1` / `behind after: 0`). Without the baseline half you cannot claim the change closed the stated hole rather than empty space.
+- Check the **negative** invariants the same way — that the fix did NOT eat unrelated state (an unrelated untracked file untouched, a dirty tracked file restored from autostash). `grep` cannot see these at all.
 - STOP-rule: a 3rd consecutive `Edit` of the same file means you are guessing — re-`Read` the file and rethink before touching it again.
 
 ## Close it yourself, or escalate to the owner (awaiting) — never silently drop
