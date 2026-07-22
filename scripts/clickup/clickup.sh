@@ -18,6 +18,11 @@
 #   create     --list <id> --name "..." [--desc "..."] [--status todo] [--priority 2]
 #                  [--assignees <id>,...] [--tags a,b] [--parent <task_id>]
 #                  (--parent makes the new task a SUBTASK of <task_id>)
+#                  [--no-dedup]  (bypass the dedup guard: by default a same /
+#                  near-same name in the list within 24h in todo/in progress/
+#                  on hold → NOT created; the existing task gets a comment and
+#                  the output is `DEDUP <id> | ...`. Env bypass:
+#                  CLICKUP_CREATE_NO_DEDUP=1. The guard is fail-open.)
 #   get-list   --list <id> [--status todo,in_progress,blocked]
 #   dashboard  [--statuses todo,in_progress,blocked]   (team+space filtered)
 #   update     --task <id> [--status ...] [--name ...] [--desc ...] [--priority ...]
@@ -199,7 +204,7 @@ cmd_create() {
   # --tags accepts BOTH repeated flags (`--tags a --tags b`) AND CSV in a single
   # flag (`--tags a,b`), and a mix — all occurrences accumulate.
   local list="" name="" desc="" status="todo" priority="" assignees="" parent=""
-  local tags=""
+  local tags="" no_dedup="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --list) list="$2"; shift 2;;
@@ -212,11 +217,49 @@ cmd_create() {
         if [[ -z "$tags" ]]; then tags="$2"; else tags="${tags},$2"; fi
         shift 2;;
       --parent) parent="$2"; shift 2;;
+      --no-dedup) no_dedup="true"; shift;;
       *) die "create: unknown flag $1";;
     esac
   done
   [[ -z "$list" ]] && die "create: need --list <id>"
   [[ -z "$name" ]] && die "create: need --name \"...\""
+
+  # DEDUP GUARD: a same / near-same name in the same list within the last 24h
+  # in an open working status (todo / in progress / on hold) → do NOT create a
+  # second task, comment on the existing one instead. Closes the failure class
+  # "an auto-pipeline files the same problem twice when it fires again" (two
+  # identical tasks seconds apart → the launcher spawns two workers on one
+  # problem). Fail-open: a guard/API error never blocks the create. Bypass:
+  # --no-dedup or CLICKUP_CREATE_NO_DEDUP=1. On a hit the output line is
+  # `DEDUP <id> | ...` instead of `CREATED ...` (consumers parse CREATED|DEDUP).
+  if [[ "${no_dedup:-false}" != "true" && "${CLICKUP_CREATE_NO_DEDUP:-0}" != "1" ]]; then
+    local _dedup_py="${SCRIPT_DIR}/../lib/clickup_dedup.py"
+    local dup_json="" dup_rc=0
+    if [[ -f "$_dedup_py" ]]; then
+      dup_json="$(python3 "$_dedup_py" --list "$list" --name "$name")" || dup_rc=$?
+    else
+      dup_rc=2
+    fi
+    if [[ $dup_rc -eq 0 && -n "$dup_json" ]]; then
+      local dup_id dup_name dup_status dup_url
+      dup_id="$(jq -r '.id' <<<"$dup_json")"
+      dup_name="$(jq -r '.name' <<<"$dup_json")"
+      dup_status="$(jq -r '.status' <<<"$dup_json")"
+      dup_url="$(jq -r '.url' <<<"$dup_json")"
+      local dup_comment
+      dup_comment="🔁 **Dedup guard**: auto-create caught a repeat signal of the same problem (this task is already open; a second one was NOT created).
+Repeated name: ${name}
+$( if [[ -n "$desc" ]]; then printf 'Repeated description (first 800 chars):\n%s' "${desc:0:800}"; fi )"
+      req POST "/task/${dup_id}/comment" \
+        "$(jq -cn --arg t "$dup_comment" '{comment_text:$t}')" >/dev/null \
+        || echo "WARN: dedup comment on ${dup_id} failed" >&2
+      echo "DEDUP ${dup_id} | ${dup_status} | ${dup_name}"
+      echo "URL: ${dup_url}"
+      return 0
+    elif [[ $dup_rc -eq 2 ]]; then
+      echo "WARN: dedup guard unavailable — creating without the check (fail-open)" >&2
+    fi
+  fi
 
   local assignees_json tags_json
   assignees_json="$(csv2json_intarr "$assignees")"
@@ -508,7 +551,7 @@ cmd_comment_replies() {
 }
 
 usage() {
-  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
