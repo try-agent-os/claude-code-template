@@ -407,14 +407,27 @@ except subprocess.CalledProcessError:
     sessions = ""
 active_slugs = {ln.split(":", 1)[0][len("worker-"):] for ln in sessions.splitlines() if ln.startswith("worker-")}
 
-# ClickUp tasks currently in_progress
-url = f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?space_ids[]={SPACE_ID}&statuses[]=in_progress&include_closed=false&page=0"
-try:
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": TOKEN}), timeout=15) as resp:
-        rows = json.loads(resp.read()).get("tasks", [])
-except Exception as e:
-    print(f"[worker-supervisor] ClickUp API error: {e}", file=sys.stderr)
-    sys.exit(0)
+# ClickUp tasks currently in_progress — ALL pages, not just page=0 (a silent
+# cap is silent data-loss): previously orphan zombies beyond the first hundred
+# in_progress tasks were invisible to the sweep forever, without a single log line.
+rows, page, capped = [], 0, False
+while True:
+    url = f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?space_ids[]={SPACE_ID}&statuses[]=in_progress&include_closed=false&page={page}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": TOKEN}), timeout=15) as resp:
+            batch = json.loads(resp.read()).get("tasks", [])
+    except Exception as e:
+        print(f"[worker-supervisor] ClickUp API error: {e} — sweep skipped", file=sys.stderr)
+        sys.exit(0)
+    rows += batch
+    if len(batch) < 100:
+        break
+    page += 1
+    if page >= 20:
+        capped = True
+        print(f"[worker-supervisor] capped: pagination stopped at 20 pages, "
+              f"{len(rows)} tasks fetched, remainder DROPPED — orphan sweep INCOMPLETE", file=sys.stderr)
+        break
 
 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 now = time.time()
@@ -471,7 +484,11 @@ for r in rows:
             f.write(f"{ts} | {slug} | crashed: orphan reset (clickup#{task_id}, no tmux, heartbeat stale) | {cause}\n")
         else:
             f.write(f"{ts} | {slug} | reset-failed: PUT error, task still in_progress (clickup#{task_id}) | {cause}\n")
+
+# A capped (incomplete) sweep MUST be visible from the outside: exit 3 → scheduler goes red.
+sys.exit(3 if capped else 0)
 PYEOF
+ORPHAN_RC=$?
 fi
 
-exit 0
+exit "${ORPHAN_RC:-0}"

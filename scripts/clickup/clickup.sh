@@ -132,6 +132,43 @@ req() {
 # --- Utilities --------------------------------------------------------------
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# --- Pagination -------------------------------------------------------------
+# fetch_tasks_paged "<path-with-qs-WITHOUT-page>" — walks ALL pages (ClickUp
+# returns at most 100 tasks per page) and prints the combined JSON array of
+# tasks to stdout.
+# Why: a silent cap is silent data-loss. Previously get-list fetched only page
+# 0 (no page param) and dashboard hardcoded page=0 — everything past the 100th
+# task was silently dropped, indistinguishable from "no tasks" from the outside.
+# Stop conditions: last_page==true (list endpoint) or a page shorter than 100
+# (team endpoint, which has no last_page field). The PAGE_HARD_CAP fuse SHOUTS
+# to stderr ("capped: ... INCOMPLETE") and returns exit 3 — under set -e the
+# script dies, so an incomplete result can never pass for a complete one.
+readonly PAGE_HARD_CAP=200
+fetch_tasks_paged() {
+  local base="$1" page=0 resp n lp tmp
+  tmp="$(mktemp)"
+  # NB: NO `trap ... RETURN` here — req() sets and disarms a shell-global
+  # RETURN trap internally (see the comment in req), which would silently wipe
+  # ours. Clean up by hand instead.
+  while :; do
+    if ! resp="$(req GET "${base}&page=${page}")"; then
+      rm -f "$tmp"; return 1
+    fi
+    n="$(jq '.tasks | length' <<<"$resp")"
+    jq -c '.tasks' <<<"$resp" >>"$tmp"
+    lp="$(jq -r 'if has("last_page") then (.last_page|tostring) else "null" end' <<<"$resp")"
+    [[ "$lp" == "true" ]] && break
+    if [[ "$lp" == "null" && "$n" -lt 100 ]]; then break; fi
+    page=$((page+1))
+    if (( page >= PAGE_HARD_CAP )); then
+      echo "capped: pagination hard-cap hit at page ${PAGE_HARD_CAP} for ${base} — dropped unknown remainder, result INCOMPLETE ($(jq -s 'add // [] | length' "$tmp") tasks fetched)" >&2
+      rm -f "$tmp"; return 3
+    fi
+  done
+  jq -cs 'add // []' "$tmp"
+  rm -f "$tmp"
+}
+
 # csv2json_strarr "a,b,c" -> ["a","b","c"]  (strings)
 csv2json_strarr() {
   local csv="${1:-}"
@@ -257,8 +294,9 @@ cmd_get_list() {
 
   local qs resp
   qs="$(statuses_qs "$status")"
-  resp="$(req GET "/list/${list}/task?archived=false${qs}")"
-  echo "$resp" | jq -r '.tasks[] | .id + " | " + (.status.status // "?") + " | " + .name'
+  # All pages, not just page 0 (previously: silent cut-off at 100 tasks).
+  resp="$(fetch_tasks_paged "/list/${list}/task?archived=false${qs}")"
+  echo "$resp" | jq -r '.[] | .id + " | " + (.status.status // "?") + " | " + .name'
 }
 
 cmd_dashboard() {
@@ -275,8 +313,9 @@ cmd_dashboard() {
   # Space filter is optional — only added when CLICKUP_SPACE_ID is set.
   space_qs=""
   [[ -n "$SPACE_ID" ]] && space_qs="&space_ids%5B%5D=${SPACE_ID}"
-  resp="$(req GET "/team/${TEAM_ID}/task?include_closed=false&page=0${space_qs}${qs}")"
-  echo "$resp" | jq -r '.tasks[] | .id + " | " + (.status.status // "?") + " | " + (.list.name // "?") + " | " + .name'
+  # All pages, not just page=0 (previously: silent cut-off at 100 tasks).
+  resp="$(fetch_tasks_paged "/team/${TEAM_ID}/task?include_closed=false${space_qs}${qs}")"
+  echo "$resp" | jq -r '.[] | .id + " | " + (.status.status // "?") + " | " + (.list.name // "?") + " | " + .name'
 }
 
 cmd_update() {
