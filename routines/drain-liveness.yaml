@@ -1,0 +1,36 @@
+# drain-liveness — catch "the queue is not empty and nothing is launching" while
+# every dashboard is still green.
+#
+# WHY: the worker launcher's failure mode is silence. When its gate drops work —
+# a truncated queue fetch, a missing opt-in tag, a dependency check that never
+# passes — the tick logs "no ready pickable task", exits 0, and this DAG goes
+# green. The queue sits full for days and nothing anywhere turns red. A status
+# cannot catch that, because the status is honest: the tick DID run.
+#
+# WHAT IT DOES: compares the queue against the launch ARTIFACTS
+# (memory/worker-activity/YYYY-MM.log, written by spawn-worker.sh). If a task
+# passes the launcher's own gate — the guard imports `pickable()` from
+# scripts/lib/drain_gate.py rather than copying it — is older than the window,
+# is not already running, and a worker slot is free, yet not one worker started
+# in the window, it files a priority-1 task describing the starving queue.
+# Idle with a legitimate explanation (cap hit, task already running, queue
+# genuinely empty) stays silent. A queue that could not be read exits 2 — it is
+# never reported as "no work".
+#
+# Cadence: hourly, against a 3h window (DRAIN_WINDOW_H), so a stalled drain is
+# caught the same morning rather than the next week. The probe is a couple of
+# API calls.
+name: drain-liveness
+description: Hourly — verify the worker drain is actually launching. Files a task when the queue holds pickable work, slots are free, and no worker started within the window (the "green DAG, empty logs" failure). Exits 2 rather than green when the queue cannot be read.
+tags:
+  - script
+  - infra
+  - periodic
+  - safety
+schedule: "17 * * * *"
+timeout_sec: 180
+max_active_runs: 1
+steps:
+  - name: check
+    command: /bin/bash /opt/agent-os/claude/scripts/drain-liveness-check.sh
+    working_dir: /opt/agent-os/claude

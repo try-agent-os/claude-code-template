@@ -51,180 +51,54 @@ fi
 
 # 2-7) Pick + launch (Python for JSON + template substitution)
 python3 - "$LAUNCHER" "$TEMPLATE" "$NOTIFY" "$REPO" "$ENV_FILE" <<'PYEOF'
-import json, os, pathlib, re, shutil, subprocess, sys, tempfile, urllib.request
+import json, os, pathlib, re, subprocess, sys, tempfile, urllib.request
 from datetime import datetime, timedelta, timezone
 
 LAUNCHER, TEMPLATE, NOTIFY, REPO, ENV_FILE = sys.argv[1:6]
 
-# Drain safety-gate. Enforcement is tag-based and lives in exactly one place so
-# that task generators and this launcher can never disagree about what a human
-# still has to look at. See scripts/lib/needs_human.py.
+# THE DRAIN GATE LIVES IN ONE PLACE: scripts/lib/drain_gate.py — the queue
+# fetch, the `pickable()` predicate (tag-based human gate via needs_human.py,
+# start-date gate, per-task dependency gate) and the priority ordering. This
+# launcher and scripts/drain-liveness-check.sh IMPORT the same predicate rather
+# than each carrying a copy: a guard whose copy has drifted would report "no
+# work in the queue" for the same wrong reason a broken launcher does, masking
+# exactly the failure it exists to catch.
 sys.path.insert(0, os.path.join(REPO, "scripts", "lib"))
-from needs_human import is_manual_gated
+from drain_gate import QueueError, fetch_queue, pickable, prio_rank, resolve_config
 
-# --- Task backend config (env, with env-file fallback) ---
-def _from_env_file(key):
-    try:
-        with open(ENV_FILE) as f:
-            for line in f:
-                if line.startswith(key + "="):
-                    return line.strip().split("=", 1)[1].strip().strip('"')
-    except OSError:
-        pass
-    return None
-
-TOKEN = os.environ.get("CLICKUP_PERSONAL_TOKEN") or _from_env_file("CLICKUP_PERSONAL_TOKEN")
-TEAM_ID = os.environ.get("CLICKUP_TEAM_ID") or _from_env_file("CLICKUP_TEAM_ID")
-SPACE_ID = os.environ.get("CLICKUP_SPACE_ID") or _from_env_file("CLICKUP_SPACE_ID")
+TOKEN, TEAM_ID, SPACE_ID = resolve_config(ENV_FILE)
 
 if not TOKEN or not TEAM_ID:
     print("[worker-launcher] CLICKUP_PERSONAL_TOKEN / CLICKUP_TEAM_ID not set — nothing to pick", file=sys.stderr)
     sys.exit(0)
 
-# Fetch todo tasks. include_subtasks=true so nested urgent/high subtasks are
-# pickable (otherwise the Team API returns only top-level tasks and the queue
-# looks empty when all eligible work is nested).
-#
-# PAGINATE. The team endpoint hard-caps at 100 tasks per page, so a single
-# `page=0` fetch silently truncates the queue: with more than 100 open todos,
-# every task past ~position 100 in the default ordering becomes invisible to the
-# launcher — forever, and with no error anywhere. The cron DAG keeps reporting
-# green while the tail of the queue never launches. Loop until a short page
-# (< PAGE_SIZE) ends it; the page guard bounds a pathological run.
-BASE = (f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?"
-        f"statuses[]=todo&include_closed=false&include_subtasks=true")
-if SPACE_ID:
-    BASE += f"&space_ids[]={SPACE_ID}"
-PAGE_SIZE = 100
-MAX_PAGES = 20
-todo = []
-for page in range(MAX_PAGES):
-    req = urllib.request.Request(f"{BASE}&page={page}", headers={"Authorization": TOKEN})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            batch = json.loads(resp.read()).get("tasks", [])
-    except Exception as e:
-        print(f"[worker-launcher] task backend API error (page {page}): {e}", file=sys.stderr)
-        # Partial-fetch resilience: pages already gathered are still valid work.
-        # Only a failure on page 0 leaves us with nothing to do.
-        if page == 0:
-            sys.exit(0)
-        print(f"[worker-launcher] proceeding with {len(todo)} tasks from pages 0..{page - 1}",
-              file=sys.stderr)
-        break
-    todo.extend(batch)
-    if len(batch) < PAGE_SIZE:
-        break
-else:
-    print(f"[worker-launcher] WARN hit the {MAX_PAGES}-page guard — queue may be truncated",
-          file=sys.stderr)
+# Fetch todo tasks — paginated, subtasks included (drain_gate.fetch_queue, which
+# in turn uses the one paginated walk in scripts/lib/clickup_fetch.py). The
+# launcher is NOT strict: pages already gathered are still valid work, so a
+# mid-walk API error just means fewer candidates this tick. Only an unusable
+# result (page-0 failure) raises, and then there is nothing to pick.
+try:
+    todo = fetch_queue(TOKEN, TEAM_ID, SPACE_ID, strict=False,
+                       log=lambda m: print(f"[worker-launcher] {m}", file=sys.stderr))
+except QueueError as e:
+    print(f"[worker-launcher] {e} — nothing to pick this tick", file=sys.stderr)
+    sys.exit(0)
 
 if not todo:
     sys.exit(0)
 
-# --- Per-task dependency gate (declarative, no launcher change per new dep) ---
-# A task declares what it needs in its own description; the launcher skips it on
-# hosts that cannot serve it. Two kinds:
-#   Requires (host cmd): bin1[, bin2...]   -> must be on PATH here
-#   Requires (dep): dep1[, dep2...]        -> scripts/lib/dep-reachable.sh must pass
-# The point is routing, not failing: one shared queue across heterogeneous hosts
-# (e.g. only one box has `tdl`) self-routes, and a task whose dep is temporarily
-# down is SKIPPED this tick — not blocked — so it drains by itself once the dep
-# recovers. Writers declare these via scripts/lib/file-finding-task.sh
-# --requires-cmd/--requires-dep; keep the spelling in sync with that script.
-DEP_CHECK = os.path.join(REPO, "scripts", "lib", "dep-reachable.sh")
-
-def parse_task_deps(description: str) -> tuple:
-    """Parse dep declarations out of a task description -> (host_cmds, deps)."""
-    host_cmds, deps = [], []
-    for line in description.splitlines():
-        m_cmd = re.match(r"\s*Requires\s*\(host cmd\)\s*:\s*(.+)", line, re.IGNORECASE)
-        if m_cmd:
-            host_cmds.extend(c.strip() for c in m_cmd.group(1).split(",") if c.strip())
-        m_dep = re.match(r"\s*Requires\s*\(dep\)\s*:\s*(.+)", line, re.IGNORECASE)
-        if m_dep:
-            deps.extend(d.strip() for d in m_dep.group(1).split(",") if d.strip())
-    return host_cmds, deps
-
-def task_deps_satisfied(task_id: str, description: str) -> bool:
-    """True if every declared dep is available here. Prints the reason if not."""
-    host_cmds, deps = parse_task_deps(description)
-    for cmd in host_cmds:
-        if shutil.which(cmd) is None:
-            print(f"[worker-launcher] skip {task_id}: host cmd '{cmd}' not on PATH here",
-                  file=sys.stderr)
-            return False
-    if deps and not os.access(DEP_CHECK, os.X_OK):
-        # Fail OPEN: a missing checker must not silently strand the whole queue.
-        print(f"[worker-launcher] WARN {task_id} declares deps but {DEP_CHECK} "
-              f"is missing/not executable — not gating", file=sys.stderr)
-        return True
-    for dep in deps:
-        rc = subprocess.run(["/bin/bash", DEP_CHECK, dep], capture_output=True, text=True)
-        if rc.returncode != 0:
-            detail = rc.stderr.strip() or f"dep-reachable.sh exited {rc.returncode}"
-            print(f"[worker-launcher] skip {task_id}: dep '{dep}' unreachable — {detail}",
-                  file=sys.stderr)
-            return False
-    return True
-
-def pickable(t: dict) -> bool:
-    name = t.get("name", "")
-    raw_tags = t.get("tags", [])
-    tag_names = {(tag["name"] if isinstance(tag, dict) else tag) for tag in raw_tags}
-    # HUMAN GATE: `needs-human` (or `manual-only`) opts a task back OUT, even
-    # when it carries `auto-worker`. Generators stamp the tag on tasks a person
-    # must see first; removing the tag after review releases the task.
-    # Checked FIRST, before every other branch, so that it holds for `Scheduled:`
-    # tasks too — a gate with an exception is not a gate, and the exception would
-    # be silent.
-    #
-    # Every gate below prints WHY it skipped. The launcher's only visible failure
-    # mode is "the queue looks empty", and a silent `return False` makes that
-    # indistinguishable from "there genuinely is no work" — the difference between
-    # a 20-minute diagnosis and a 20-day one.
-    if is_manual_gated(name, tag_names):
-        print(f"[worker-launcher] skip {t.get('id')} ({name[:60]}): human gate", file=sys.stderr)
-        return False
-    # START-DATE GATE: a task with a future start_date is deferred — skipped
-    # until that wall-clock moment, then drained normally. Lets a task self-
-    # activate at a set time without a one-shot cron. start_date is epoch-ms
-    # (string) or null/absent; malformed → ignore the gate.
-    sd = t.get("start_date")
-    if sd:
-        try:
-            if int(sd) > int(datetime.now(timezone.utc).timestamp() * 1000):
-                print(f"[worker-launcher] skip {t.get('id')} ({name[:60]}): start_date in the future",
-                      file=sys.stderr)
-                return False
-        except (TypeError, ValueError):
-            pass
-    # DEPENDENCY GATE: applies to every task class (a `Scheduled:` task needing
-    # a missing binary is exactly the case this exists for).
-    if not task_deps_satisfied(t.get("id"), t.get("description") or ""):
-        return False
-    # Scheduled cron-tasks — system-internal, keep priority-only gate.
-    prio = t.get("priority")
-    prio_id = prio.get("id") if prio else None
-    if name.startswith("Scheduled:"):
-        return prio_id in ("1", "2", "3")
-    # User tasks — require the `auto-worker` opt-in tag. ALL priorities drain
-    # (urgency is ordering, not a gate); the tag is the safety valve so
-    # judgment/personal tasks are never auto-grabbed.
-    return "auto-worker" in tag_names
-
-def _prio_rank(t: dict) -> int:
-    prio = t.get("priority")
-    pid = prio.get("id") if prio else None
-    try:
-        return int(pid)
-    except (TypeError, ValueError):
-        return 99
+# --- The gate: scripts/lib/drain_gate.py:pickable() ---
+# Not inlined here on purpose. A task declares what it needs in its own
+# description ("Requires (host cmd): ..." / "Requires (dep): ..."), carries the
+# `auto-worker` opt-in tag or the `needs-human` veto, and may defer itself with
+# a future start_date — all of that is one predicate, and it must be THE SAME
+# predicate the liveness guard uses to decide whether the queue is starving.
+# See the WHY block in scripts/lib/drain_gate.py.
 
 # Pick the most urgent pickable task (min priority id; stable tie-break keeps
 # queue order — p3 eligible only once p1/p2 are drained).
-_pickables = [t for t in todo if pickable(t)]
-candidate = min(_pickables, key=_prio_rank) if _pickables else None
+_pickables = [t for t in todo if pickable(t, REPO)]
+candidate = min(_pickables, key=prio_rank) if _pickables else None
 if candidate is None:
     sys.exit(0)
 
