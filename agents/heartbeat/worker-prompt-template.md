@@ -202,8 +202,8 @@ This check prevents double (or triple) billing for completed work.
 
 If during the task you discover a better way — a way that would actually change how this kind of task is approached — write a proposal at `memory/proposals/{YYYY-MM-DD}-{{TASK_ID}}.md`.
 
-Treat the proposal queue as frontmatter-only: whatever scans `memory/proposals/` reads the
-top block of each file, not the body. Corollary you MUST follow when writing the proposal:
+The queue is read frontmatter-only (`scripts/proposals-pending.sh`) — never by grepping
+the files. Corollary you MUST follow when writing the proposal:
 the status key belongs in your own frontmatter and NOWHERE else in the file. If your
 `### Before`/`### After` blocks quote a frontmatter template, replace the status line with
 a placeholder (`status: <value>`) — a literal one makes your already-applied proposal look
