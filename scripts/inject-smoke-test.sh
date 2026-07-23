@@ -96,8 +96,18 @@ if echo "$pane" | grep -qiF "Press up to edit queued messages"; then
   echo "BROKEN: /clear was QUEUED as a message on a busy session (busy-gate regressed)"
   exit 1
 fi
-if ! echo "$pane" | grep -qF "Welcome back"; then
-  echo "BROKEN: /clear on a busy session did NOT execute (no fresh banner after interrupt)"
+# CC 2.1.218 stopped printing the legacy "Welcome back" banner on /clear; a
+# successful clear now just re-renders the startup logo ("Claude Code v<ver>" +
+# model line + cwd). The DEFINITIVE proof the context was actually wiped (not
+# merely that /clear was typed) is that the busy turn's essay prompt is GONE from
+# the transcript — a queued or ignored /clear would leave "history of tea" on
+# screen. The banner grep accepts EITHER form so it survives on 2.1.<218 too.
+if echo "$pane" | grep -qiF "history of tea"; then
+  echo "BROKEN: /clear on a busy session did NOT clear context (busy turn's prompt still present — inject queued/ignored)"
+  exit 1
+fi
+if ! echo "$pane" | grep -qE "Welcome back|Claude Code v[0-9]"; then
+  echo "BROKEN: /clear on a busy session left no cleared-screen banner (no Welcome-back / startup logo after interrupt)"
   exit 1
 fi
 echo "ok: /clear healthy on idle AND busy composer (char-by-char + busy-interrupt gate)"
