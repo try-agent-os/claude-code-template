@@ -17,6 +17,7 @@
 #   2 — index EMPTY: the commit would be a no-op ("silent commit of nothing")
 #   3 — an expected file is MISSING from the index (the failure above, verbatim)
 #   4 — an UNEXPECTED file is staged (cross-task contamination)
+#   5 — WRONG REPOSITORY: cwd is not the worker's own worktree
 #   64 — usage / not a git repo
 #
 # Intentionally read-only: it never stages, unstages, or commits. It answers one
@@ -30,6 +31,25 @@ if [ $# -eq 0 ]; then
 fi
 
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "guard: not a git repo (cwd=$PWD)" >&2; exit 64; }
+
+# --- wrong-repo assert --------------------------------------------------------
+# The index can be perfectly correct and still belong to the WRONG repository. An
+# agent's shell tool typically remembers its working directory between calls: one
+# `cd <main checkout>` for a grep moves every later git command out of the worker's
+# worktree and into the main checkout on `main`, where `git add` + `git commit`
+# succeed and the work lands on a branch the worker never delivers. Observed live:
+# the index in the main checkout matched 4 of 5 expected files, i.e. a 5-for-5
+# `git add` would have passed the checks below and committed straight onto `main`.
+if [ -n "${AGENTOS_WORKER_WORKTREE:-}" ]; then
+  TOP="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+  if [ "$TOP" != "$AGENTOS_WORKER_WORKTREE" ]; then
+    echo "GUARD FAILED (5): wrong repository — cwd resolves to '$TOP'," >&2
+    echo "  but your worktree is '$AGENTOS_WORKER_WORKTREE' (branch ${AGENTOS_WORKER_BRANCH:-?})." >&2
+    echo "  A commit here would land outside your branch and never be delivered." >&2
+    echo "  Fix: cd \"\$AGENTOS_WORKER_WORKTREE\" (or use git -C) and re-stage." >&2
+    exit 5
+  fi
+fi
 
 # The index — NOT `git status`, NOT the working tree. --diff-filter excludes nothing:
 # adds, modifies, deletes and renames all count as "staged for commit".

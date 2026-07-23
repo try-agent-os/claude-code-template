@@ -38,8 +38,50 @@ fi
 
 cd "$WT" || { echo "DELIVERY FAILED: cannot cd into worktree $WT" >&2; exit 3; }
 
+# write_sentinel <reason> — the sentinel has two jobs (see the tail of this file);
+# every FAILED path must leave one, not just the ff-push one.
+write_sentinel() {
+  printf 'branch=%s\nhead=%s\nreason=%s\ntask=%s\nat=%s\n' \
+    "$BR" "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$1" \
+    "${AGENTOS_WORKER_TASK_ID:-unknown}" "$(date -u +%FT%TZ)" \
+    > "$WT/.agentos-undelivered"
+}
+
+# --- assert 1: the worktree is on the branch we are about to deliver ------------
+# An agent's shell tool remembers its working directory between calls: one
+# `cd <main checkout>` for a grep silently moves every later git command into the
+# MAIN checkout on `main`. Before this assert the mismatch was invisible — HEAD
+# looked fine, the worktree looked empty, and the "nothing to merge" branch below
+# turned a lost commit into exit 2 (n/a), which /done reads as "nothing to deliver"
+# and reports green.
+CUR_BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [ -n "$BR" ] && [ -n "$CUR_BR" ] && [ "$CUR_BR" != "$BR" ]; then
+  echo "DELIVERY FAILED: worktree $WT is on '$CUR_BR', expected '$BR' — refusing to guess" >&2
+  write_sentinel "worktree on wrong branch ($CUR_BR != $BR)"
+  exit 3
+fi
+
 git fetch origin main -q 2>/dev/null || true   # stale origin/main would fake "nothing to merge"
 if [ -z "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
+  # --- assert 2: "empty worktree" must not mean "the work went somewhere else" ---
+  # Same cwd trap, other half: the worker committed in the MAIN checkout, so ITS local
+  # `main` is ahead of origin/main while this worktree is untouched. Only `worker:`-prefixed
+  # commits created after this worker spawned are counted — other agents' commits
+  # (different prefixes, pushed by the repo-sync loop) never match, so an innocent worker
+  # is not pushed into /blocked.
+  SPAWN_EPOCH="${BR##*-}"
+  case "$SPAWN_EPOCH" in (*[!0-9]*|'') SPAWN_EPOCH="" ;; esac
+  if [ -n "$SPAWN_EPOCH" ] && [ -d "$MAIN" ]; then
+    STRAY="$(git -C "$MAIN" log origin/main..HEAD --oneline --since="@$SPAWN_EPOCH" \
+               --grep='^worker:' 2>/dev/null || true)"
+    if [ -n "$STRAY" ]; then
+      echo "DELIVERY FAILED: worker commits landed in the MAIN checkout ($MAIN), not in $WT:" >&2
+      echo "$STRAY" >&2
+      echo "Recover: git -C $WT cherry-pick <sha>...  then re-run worker-deliver.sh" >&2
+      write_sentinel "worker commits stranded in main checkout $MAIN"
+      exit 3
+    fi
+  fi
   # Nothing ahead of origin/main ⇒ HEAD is an ancestor of it ⇒ anything this worktree
   # once held IS delivered. Drop a sentinel left by an earlier failed attempt, otherwise
   # a worker that re-merged by hand stays locked out of `outcome: done` forever.
@@ -77,9 +119,7 @@ echo "DELIVERY FAILED: not in origin/main —$UNDELIVERED (branch '$BR' orphaned
 #      (the GC keys on a dead tmux session, which /done is about to cause). Self-clearing:
 #      the GC reaps it once the commits genuinely land in origin/main.
 #  (2) the comment guard reads it and refuses to post `outcome: done`.
-printf 'branch=%s\nhead=%s\nundelivered=%s\ntask=%s\nat=%s\n' \
-  "$BR" "$(git rev-parse HEAD)" "$UNDELIVERED" "${AGENTOS_WORKER_TASK_ID:-unknown}" \
-  "$(date -u +%FT%TZ)" > "$WT/.agentos-undelivered"
+write_sentinel "commits not in origin/main:$UNDELIVERED"
 
 git push -u origin "$BR" 2>/dev/null || true   # best-effort: keep the work reachable from the remote
 

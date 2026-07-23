@@ -117,8 +117,18 @@ git rebase --autostash origin/main 2>&1 >/dev/null || true
 # so operator commits always land on main. Submodule-routed workers
 # (WORKER_WORK_DIR set) operate in a separate repo with their own flow → left
 # untouched.
+#
+# Every path below that destroys or resets a worktree first asks
+# `preserve_undelivered_worktree` (scripts/lib/worker-worktree.sh) whether that path
+# still holds work missing from origin/main. If it does, the branch is pushed, a
+# `.agentos-undelivered` sentinel is written, and the path is left alone — the reap
+# turns into a preservation instead of a silent loss. The sentinel checks further
+# down only cover worktrees a *successful* verify-gate had time to mark; this guard
+# covers the ones that died before anything could mark them.
 WORKER_BRANCH=""
 WORKER_WORKTREE=""
+# shellcheck source=scripts/lib/worker-worktree.sh
+. "$REPO_ROOT/scripts/lib/worker-worktree.sh"
 # WORKER_NO_WORKTREE=1 opts a launch out of the isolated worktree and runs it in
 # the shared main tree (e.g. the strategist, which edits memory/ in place and is
 # a singleton — no cross-task contention to isolate against).
@@ -155,6 +165,10 @@ if [ "$LAUNCH_CWD" = "$REPO_ROOT" ] && [ "${WORKER_NO_WORKTREE:-0}" != "1" ]; th
         fi
         echo "spawn-worker: $wt was undelivered but its commits are now in origin/main — reaping" >&2
       fi
+      # Last check before the point of no return: a dead session is exactly the state
+      # a hard-killed worker leaves behind, and its commits may never have reached
+      # origin/main. The guard pushes + marks such a tree instead of deleting it.
+      preserve_undelivered_worktree "$wt" || continue
       git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
       # Branches are epoch-suffixed (worker/<slug>-<epoch>); reap every local branch
       # for this slug plus the legacy bare name for back-compat.
@@ -174,6 +188,13 @@ if [ "$LAUNCH_CWD" = "$REPO_ROOT" ] && [ "${WORKER_NO_WORKTREE:-0}" != "1" ]; th
     done
     git worktree prune 2>/dev/null || true
   fi
+  # Same-slug requeue: the previous tick on THIS path may have died without a green
+  # /done (timeout janitor, crash, lost ff-push race) and therefore without a sentinel.
+  # Ask the guard before the sentinel-driven logic below runs, so a freshly detected
+  # orphan takes the "move aside, keep the branch" path instead of the "rm -rf and cut
+  # a new branch from origin/main" one. This is the exact tick boundary at which
+  # committed-but-unmerged worker output was observed to vanish.
+  preserve_undelivered_worktree "$WORKER_WORKTREE" || true
   # A preserved undelivered worktree on this slug's path: a requeue of the SAME task
   # must not bulldoze the prior run's unmerged commits. Move it aside (`git worktree
   # move` keeps the metadata + branch intact) so the work survives AND the path frees
