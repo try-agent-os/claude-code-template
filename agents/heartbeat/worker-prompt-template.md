@@ -89,6 +89,22 @@ If your task needs Google Workspace, read the current status and transports of t
 - Check the **negative** invariants the same way — that the fix did NOT eat unrelated state (an unrelated untracked file untouched, a dirty tracked file restored from autostash). `grep` cannot see these at all.
 - STOP-rule: a 3rd consecutive `Edit` of the same file means you are guessing — re-`Read` the file and rethink before touching it again.
 
+## OUTPUT DISCIPLINE (do not hide your own success behind your own filter)
+- Do NOT invent a filter (`| grep '"id"'`, `| jq .id`, `| head -1`) for the output of a
+  command whose format you have not checked. When the pattern misses you see
+  "(Bash completed with no output)" for a call that SUCCEEDED -> you conclude it failed
+  -> you retry -> duplicate record, or a doubled external side-effect. Real incident:
+  `clickup.sh create` returned HTTP 200 and created the task, the worker piped the output
+  through `grep -iE '"id"|error'` (the output is not JSON), got an empty result back and
+  created a second task 13 seconds later.
+- Default: run the command WITHOUT a filter and read the output whole. If you need a
+  single token, look at the real format FIRST, then filter (`clickup.sh create` prints a
+  leading marker word -> `awk '/^(CREATED|DEDUP)/{print $2}'`).
+- Empty output is NOT a failure. Before re-running a command that has an external
+  side-effect, check the RESULT (was the task created? does the file exist? was the
+  message delivered?), not the output. The exit code and unfiltered `2>&1` are the source
+  of truth; your grep is not.
+
 ## Close it yourself, or escalate to the owner (awaiting) — never silently drop
 
 The self-healing loop's whole point: the system closes what it can and surfaces
@@ -184,7 +200,15 @@ This check prevents double (or triple) billing for completed work.
 
 ## Procedural Memory (improvement proposals)
 
-If during the task you discover a better way — a way that would actually change how this kind of task is approached — write a proposal at `memory/proposals/{YYYY-MM-DD}-{{TASK_ID}}.md`:
+If during the task you discover a better way — a way that would actually change how this kind of task is approached — write a proposal at `memory/proposals/{YYYY-MM-DD}-{{TASK_ID}}.md`.
+
+Treat the proposal queue as frontmatter-only: whatever scans `memory/proposals/` reads the
+top block of each file, not the body. Corollary you MUST follow when writing the proposal:
+the status key belongs in your own frontmatter and NOWHERE else in the file. If your
+`### Before`/`### After` blocks quote a frontmatter template, replace the status line with
+a placeholder (`status: <value>`) — a literal one makes your already-applied proposal look
+pending to every future scan of the directory. Same rule for review/triage write-ups: they
+go to `memory/proposals/archive/`, not next to the live queue.
 
 ```markdown
 ---
