@@ -18,6 +18,13 @@
 # Status slugs are backend-agnostic and normalized by the adapter:
 #   todo | in_progress | in_review | blocked | on_hold | done
 #
+# Derived helpers — built on the four primitives, so every adapter (including a
+# custom one) gets them for free without implementing anything extra:
+#
+#   tq_fetch_status        <task_id>  -> normalized slug (lowercase, spaces→_), ""
+#   tq_fetch_comments_json <task_id>  -> JSON array of comment bodies, oldest
+#                                        first, "[]" on failure
+#
 # Selecting a backend:
 #   AGENTOS_TASK_BACKEND=clickup   (default — reference implementation, below)
 #   AGENTOS_TASK_BACKEND=custom    -> sources $AGENTOS_TASK_BACKEND_SCRIPT, which
@@ -77,9 +84,12 @@ tq_clickup_get_comments() {
   local task_id="$1" token
   token="$(_tq_clickup_token)"
   [ -z "$token" ] && { echo ""; return 1; }
+  # `-c`, not `-r`: the documented contract is one JSON *string* per line. A raw
+  # dump splits a multi-line comment body across lines, and every consumer that
+  # reads this line-by-line then sees one comment as several.
   curl -sS -H "Authorization: ${token}" \
     "https://api.clickup.com/api/v2/task/${task_id}/comment" 2>/dev/null \
-    | jq -r '[.comments[]? | .comment_text] | reverse | .[]' 2>/dev/null || echo ""
+    | jq -c '[.comments[]? | .comment_text] | reverse | .[]' 2>/dev/null || echo ""
 }
 
 # ---------------------------------------------------------------------------
@@ -117,3 +127,34 @@ case "$AGENTOS_TASK_BACKEND" in
     return 1 2>/dev/null || exit 1
     ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Derived read helpers (backend-agnostic — defined once, after dispatch)
+# ---------------------------------------------------------------------------
+# The supervisor family needs two shapes on top of the raw primitives: a
+# normalized status slug and the comment history as a single JSON array. Every
+# per-instance supervisor used to carry its own curl+parse copy of both, so a
+# fix (curl timeout, a status-schema change, an auth-header change) landed in
+# one copy and silently stayed broken in the rest. Defined here, they follow
+# whatever backend is selected above.
+#
+# Neither helper ever fails: a supervisor tick must degrade to "I know nothing
+# about this task" rather than die halfway through its session loop.
+
+# tq_fetch_status <task_id> -> lowercase slug, spaces→underscores, "" on failure.
+tq_fetch_status() {
+  local task_id="${1:-}"
+  [ -z "$task_id" ] && { echo ""; return 0; }
+  tq_get_status "$task_id" 2>/dev/null \
+    | head -n 1 | tr '[:upper:]' '[:lower:]' | tr ' ' '_' || echo ""
+}
+
+# tq_fetch_comments_json <task_id> -> JSON array of comment bodies, OLDEST first
+# (tq_get_comments yields newest first), "[]" on failure or no comments.
+tq_fetch_comments_json() {
+  local task_id="${1:-}" out
+  [ -z "$task_id" ] && { echo "[]"; return 0; }
+  out="$(tq_get_comments "$task_id" 2>/dev/null | jq -sc 'reverse' 2>/dev/null)"
+  [ -z "$out" ] && out="[]"
+  echo "$out"
+}

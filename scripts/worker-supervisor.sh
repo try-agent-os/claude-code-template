@@ -97,33 +97,14 @@ alert() {
   log "ALERT[$sev] $*"
 }
 
-# fetch_status <task_id> → lowercased ClickUp status, spaces→underscores ("").
-fetch_status() {
-  local task_id="$1"
-  [[ -z "$TOKEN" || -z "$task_id" ]] && { echo ""; return; }
-  curl -sSf -H "Authorization: ${TOKEN}" \
-    "https://api.clickup.com/api/v2/task/${task_id}" 2>/dev/null \
-    | python3 -c "
-import json,sys
-try: print(str(json.load(sys.stdin).get('status',{}).get('status','')).strip().lower().replace(' ','_'))
-except Exception: print('')
-" 2>/dev/null || echo ""
-}
-
-# fetch_comments_text <task_id> → JSON array of comment texts (oldest-first).
-fetch_comments_text() {
-  local task_id="$1"
-  [[ -z "$TOKEN" || -z "$task_id" ]] && { echo "[]"; return; }
-  curl -sSf -H "Authorization: ${TOKEN}" \
-    "https://api.clickup.com/api/v2/task/${task_id}/comment" 2>/dev/null \
-    | python3 -c "
-import json,sys
-try:
-    cs=sorted(json.load(sys.stdin).get('comments',[]),key=lambda c:int(c.get('date','0')))
-    print(json.dumps([c.get('comment_text','') for c in cs]))
-except Exception: print('[]')
-" 2>/dev/null || echo "[]"
-}
+# Task reads go through the backend seam, NOT through a private curl copy:
+# tq_fetch_status (normalized slug, "" on failure) and tq_fetch_comments_json
+# (JSON array, oldest first, "[]" on failure) live in scripts/lib/task-queue.sh.
+# Keeping them there is the whole point — this supervisor, the launcher and any
+# per-instance supervisor a fork adds all read the same implementation, so a fix
+# lands once instead of in each copy.
+# shellcheck source=lib/task-queue.sh
+source "${REPO}/scripts/lib/task-queue.sh"
 
 # comments_have_done <comments_json> → "1" if one of the last 4 comments carries
 # the worker's own `outcome: done` marker, else "0". A finished worker always
@@ -172,7 +153,7 @@ while IFS= read -r sess; do
   # tick — its self-kill races us. Never re-flip a terminal/review status; just
   # release the slot. Re-running must be a no-op on these statuses.
   if [ -n "$clickup_task_id" ]; then
-    st=$(fetch_status "$clickup_task_id")
+    st=$(tq_fetch_status "$clickup_task_id")
     case "$st" in
       in_review|done|complete|completed|closed|approved|cancelled|canceled)
         activity "supervisor: $sess ClickUp '${st}' terminal — worker finished, releasing slot (no flip)"
@@ -185,7 +166,7 @@ while IFS= read -r sess; do
 
   # ── Phase 1b: singleton (DAG-launched) completion no-op ────────────────────
   # A DAG-launched singleton (e.g. a strategist) carries a sentinel
-  # clickup-task-id (literal "strategist", or empty) — fetch_status 404s → '',
+  # clickup-task-id (literal "strategist", or empty) — tq_fetch_status 404s → '',
   # so Phase 1 above can't see its completion. It then sits idle at a finished
   # prompt with a static pane and Phase 4 fires a false "stalled → KILL for
   # respawn" alert (nothing respawns it; the DAG already ran). Detect completion
@@ -247,7 +228,7 @@ while IFS= read -r sess; do
   if [ "$age_min" -ge "$cap_min" ]; then
     activity "supervisor: timing out $sess (age=${age_min}min cap=${cap_min}min clickup=${clickup_task_id:-?})"
     if [ -n "$clickup_task_id" ]; then
-      comments_json=$(fetch_comments_text "$clickup_task_id")
+      comments_json=$(tq_fetch_comments_json "$clickup_task_id")
       has_awaiting=$(comments_have_awaiting "$comments_json")
       has_done=$(comments_have_done "$comments_json")
 
@@ -317,7 +298,7 @@ print(sum(1 for t in texts if 'Janitor timeout' in t and ('requeued' in t or 'bl
           stall_alerted=1
         fi
       else
-        status=$(fetch_status "$clickup_task_id")
+        status=$(tq_fetch_status "$clickup_task_id")
         if [ "$status" = "in_progress" ]; then
           # Static pane + in_progress past the stall window is more often a GHOST
           # than a hang: a worker that finished its work (and committed) but whose
@@ -329,7 +310,7 @@ print(sum(1 for t in texts if 'Janitor timeout' in t and ('requeued' in t or 'bl
           # through, and that alerts ONCE (guard) then stays watch-only: the
           # wall-cap (Phase 3) remains the sole kill-authority, which is what
           # protects a legitimately long quiet model turn.
-          comments_json=$(fetch_comments_text "$clickup_task_id")
+          comments_json=$(tq_fetch_comments_json "$clickup_task_id")
           gh_done=$(comments_have_done "$comments_json")
           gh_awaiting=$(comments_have_awaiting "$comments_json")
           if [ "${gh_done:-0}" = "1" ]; then
@@ -407,27 +388,20 @@ except subprocess.CalledProcessError:
     sessions = ""
 active_slugs = {ln.split(":", 1)[0][len("worker-"):] for ln in sessions.splitlines() if ln.startswith("worker-")}
 
-# ClickUp tasks currently in_progress — ALL pages, not just page=0 (a silent
-# cap is silent data-loss): previously orphan zombies beyond the first hundred
-# in_progress tasks were invisible to the sweep forever, without a single log line.
-rows, page, capped = [], 0, False
-while True:
-    url = f"https://api.clickup.com/api/v2/team/{TEAM_ID}/task?space_ids[]={SPACE_ID}&statuses[]=in_progress&include_closed=false&page={page}"
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": TOKEN}), timeout=15) as resp:
-            batch = json.loads(resp.read()).get("tasks", [])
-    except Exception as e:
-        print(f"[worker-supervisor] ClickUp API error: {e} — sweep skipped", file=sys.stderr)
-        sys.exit(0)
-    rows += batch
-    if len(batch) < 100:
-        break
-    page += 1
-    if page >= 20:
-        capped = True
-        print(f"[worker-supervisor] capped: pagination stopped at 20 pages, "
-              f"{len(rows)} tasks fetched, remainder DROPPED — orphan sweep INCOMPLETE", file=sys.stderr)
-        break
+# Tasks currently in_progress — ALL pages, not just page=0 (a silent cap is
+# silent data-loss: orphan zombies beyond the first hundred in_progress tasks
+# used to be invisible to the sweep forever, without a single log line). The
+# page walk itself is NOT reimplemented here — scripts/lib/clickup_fetch.py owns
+# it for every consumer, so the next fix to it lands once.
+from clickup_fetch import fetch_tasks
+
+result = fetch_tasks(TOKEN, TEAM_ID, statuses=["in_progress"], space_ids=[SPACE_ID],
+                     label="worker-supervisor",
+                     log=lambda m: print(m, file=sys.stderr))
+if result.error is not None and not result.tasks:
+    print("[worker-supervisor] no usable task list — sweep skipped", file=sys.stderr)
+    sys.exit(0)
+rows, capped = result.tasks, result.capped
 
 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 now = time.time()
