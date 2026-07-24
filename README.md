@@ -52,7 +52,7 @@ plus documentation and examples.
 
 ## Deploy to DigitalOcean
 
-[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&refcode=6f9a0892dd0a&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fclaude-code-template%2Fmain%2Fcloud-init.yaml)
+[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/droplets/new?image=ubuntu-24-04-x64&size=s-2vcpu-4gb&region=fra1&refcode=6f9a0892dd0a&user_data=https%3A%2F%2Fraw.githubusercontent.com%2Ftry-agent-os%2Fagentos%2Fmain%2Fcloud-init.yaml)
 
 One click provisions an Ubuntu 24.04 droplet that boots an **AgentOS node** —
 the runtime: a Telegram bot with Claude in-process, a scheduler, and the Mini

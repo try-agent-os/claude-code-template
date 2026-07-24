@@ -19,21 +19,6 @@ jobs:
         run: |
           yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable, comments: disable}}" .agentos examples
 
-      - name: cloud-init sanity (pure ASCII + valid YAML)
-        # cloud-init's YAML 1.1 parser rejects non-ASCII bytes and then silently
-        # skips runcmd — the deploy button "works" but installs nothing.
-        run: |
-          python3 - <<'PY'
-          import sys, yaml
-          data = open('cloud-init.yaml','rb').read()
-          bad = [i for i, b in enumerate(data) if b > 127]
-          if bad:
-              print(f"cloud-init.yaml: non-ASCII byte at offset {bad[0]}")
-              sys.exit(1)
-          yaml.safe_load(data)
-          print('cloud-init.yaml ok')
-          PY
-
       - name: Check SKILL.md frontmatter
         run: |
           python3 - <<'PY'
