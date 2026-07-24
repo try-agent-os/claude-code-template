@@ -70,7 +70,6 @@ agents/
   operator/         CLAUDE.md, SOUL.md, .mcp.json, .claude/, start.sh
   heartbeat/        CLAUDE.md, SOUL.md, .mcp.json,
                     worker-prompt-template.md, strategist.sh, hooks/, skills/
-  saga-dashboard/   server.js, index.html, start.sh, stop.sh
 memory/
   context.md, decisions.md, learnings.md,    # current state
   patterns.md, patterns-staging.md,           # confidence-scored patterns
@@ -78,10 +77,9 @@ memory/
   schedule.md, check-log.md,                  # cron-like checks
   proposals/, postmortems/,                   # workflow docs
   performance.md, signals.md, opportunities.md,
-  self-heal-runbook.md,                       # 3-tier auto-recovery catalog
-  epic-map.json                               # saga epic name → id
+  epic-map.json                               # queue epic name → id (generated)
 plugins/            vendored claude-code plugins (see .claude-plugin/marketplace.json)
-scripts/            cost-dashboard, token-report, worker-analytics
+scripts/            worker fleet, watchdogs, queue + scheduled-check layer
 systemd/            linux unit files (one per service)
 launchd/            mac plists (mirror of systemd/)
 examples/skills/    reference skills from a real deployment (Novo Studio)

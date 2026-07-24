@@ -1,3 +1,9 @@
+---
+title: Self-Heal Runbook (catalog)
+summary: Reference catalog of the 8 self-heal runbooks (RB-001..RB-008) — detection pattern, auto-fix procedure, and escalation rule for each. The data behind self-heal-diagnose (L2) and self-heal-autofix (L3).
+read_when: Diagnosing or fixing a failure — to look up a runbook by ID or match a crash pattern; also when a postmortem shows a recurrent pattern that deserves a new runbook entry.
+---
+
 # Self-Heal Runbook — AgentOS Catalog
 
 **Updated:** YYYY-MM-DD

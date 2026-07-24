@@ -51,5 +51,5 @@ lsof -i :443 | grep "<remote-host-pattern>"
 ## Follow-ups
 
 - [ ] Saga task: `<task-id>` — long-term mitigation
-- [ ] Update `memory/self-heal-runbook.md` if pattern is recurrent
+- [ ] Update `agents/heartbeat/skills/self-heal-runbook.md` if pattern is recurrent
 - [ ] Add to `memory/learnings.md` with tag `#correction` if user feedback drove the resolution

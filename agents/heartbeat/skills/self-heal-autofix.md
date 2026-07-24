@@ -449,5 +449,5 @@ mcp__saga-mcp__task_create(
 ## Related files
 
 - `{REPO_URL}/agents/heartbeat/skills/self-heal-diagnose.md` — L2 diagnosis (previous step)
-- `{REPO_URL}/memory/self-heal-runbook.md` — runbook catalog
+- `{REPO_URL}/agents/heartbeat/skills/self-heal-runbook.md` — runbook catalog
 - `{REPO_URL}/research/self-healing-architecture.md` — full architecture

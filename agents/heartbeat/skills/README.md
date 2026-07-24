@@ -25,6 +25,7 @@ Agent(
 | self-upgrade-scan | [self-upgrade-scan.md](self-upgrade-scan.md) | Daily search for tools that could improve the AgentOS stack |
 | self-heal-diagnose | [self-heal-diagnose.md](self-heal-diagnose.md) | crash_streak >= 3 or zombie/MAX_ITER; need to diagnose root cause before fix |
 | self-heal-autofix | [self-heal-autofix.md](self-heal-autofix.md) | After self-heal-diagnose with diagnosis JSON; auto_fixable=true |
+| self-heal-runbook | [self-heal-runbook.md](self-heal-runbook.md) | Reference catalog RB-001..RB-008 behind diagnose/autofix; add entries for recurrent postmortem patterns |
 
 ---
 

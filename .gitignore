@@ -4,28 +4,17 @@
 
 # ─────────────────────────────────────────────────────────────────────────
 # Runtime memory — user data, NEVER commit even by accident.
-# Schemas (the *_template.md files) are template-managed and DO get committed.
+# EVERYTHING under memory/ is ignored except the committed template skeleton:
+# schemas (*_template.md, .keep) and the files whitelisted by name below.
 # Anything filled in by the operator at runtime stays local to the deploy.
 # ─────────────────────────────────────────────────────────────────────────
-/memory/owner.md
-/memory/people/*
-!/memory/people/_template.md
-!/memory/people/.keep
-/memory/contacts/*
-!/memory/contacts/_template.md
-!/memory/contacts/.keep
-/memory/clients/*
-!/memory/clients/_template.md
-!/memory/clients/.keep
-/memory/projects/*
-!/memory/projects/_template.md
-!/memory/projects/.keep
-/memory/members/*
-!/memory/members/_template.md
-!/memory/members/.keep
-/memory/team/decisions.md
-/memory/team/shared-priorities.md
-/memory/sweeps/
+/memory/**
+!/memory/**/
+!/memory/**/_template.md
+!/memory/**/.keep
+!/memory/owner._template.md
+!/memory/postmortems/TEMPLATE.md
+!/memory/proposals/README.md
 
 # Runtime logs / audit trails / session state — high-churn, low-signal-to-noise.
 # Policy: ephemeral cursors / dedup state / runtime locks are NOT history —
@@ -46,11 +35,6 @@ telegram-mcp*.log
 CHANGELOG.md.lock
 /.claude/settings.local.json
 /.claude/agent-memory/
-/memory/sessions.log
-/memory/sessions/
-/memory/worker-activity.log
-/memory/worker-activity/
-/memory/operator-context-snapshot.md
 
 # Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
 .env
