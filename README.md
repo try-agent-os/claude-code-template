@@ -91,6 +91,11 @@ troubleshooting — live in the node's repo:
 **[try-agent-os/agentos](https://github.com/try-agent-os/agentos)**. This
 section is just the button; the node repo is the manual.
 
+No DigitalOcean account yet? Signing up through this badge supports the
+project:
+
+<a href="https://www.digitalocean.com/?refcode=6f9a0892dd0a&utm_campaign=Referral_Invite&utm_medium=Referral_Program&utm_source=badge"><img src="https://web-platforms.sfo2.cdn.digitaloceanspaces.com/WWW/Badge%201.svg" alt="DigitalOcean Referral Badge" /></a>
+
 ## Ground rules
 
 - **No secrets in the repo — ever.** Tokens and keys live in the node
