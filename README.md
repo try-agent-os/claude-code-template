@@ -44,7 +44,9 @@ plus documentation and examples.
    personal context.
 2. Fill in `CLAUDE.md` (the charter) and `memory/owner.md` (copy
    `memory/owner._template.md`).
-3. Connect the repo to your AgentOS node.
+3. Connect the repo to your AgentOS node. To install a node, follow
+   [try-agent-os/agentos](https://github.com/try-agent-os/agentos) — or use the
+   DigitalOcean button below.
 4. Talk to your agent in Telegram — and teach it: skills go to `skills/`,
    scheduled routines to `.agentos/workflows/`, knowledge to `memory/`.
 
@@ -83,6 +85,11 @@ the button.
 little as 2 GB RAM. **Want the Mini App?** Point a DNS A record at the droplet
 and swap `--no-https` for `--domain your.host.name` (opens 80+443; Let's
 Encrypt cert issued automatically).
+
+Full installation docs — other providers, HTTPS and the Mini App, upgrades,
+troubleshooting — live in the node's repo:
+**[try-agent-os/agentos](https://github.com/try-agent-os/agentos)**. This
+section is just the button; the node repo is the manual.
 
 ## Ground rules
 

@@ -71,7 +71,8 @@ write_files:
        Want the Mini App too? Point a DNS A record at this host and
        swap --no-https for --domain your.host.name (open ports 80+443).
 
-       Docs: https://github.com/try-agent-os/claude-code-template
+       Install docs: https://github.com/try-agent-os/agentos
+       State-repo template: https://github.com/try-agent-os/claude-code-template
       =============================================================
 
   - path: /etc/profile.d/agentos-bootstrap.sh
