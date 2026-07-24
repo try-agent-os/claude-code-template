@@ -1,0 +1,20 @@
+# Extra binaries manifest. The node installs these at boot, on top of the
+# base image: each entry is downloaded, verified against sha256, and (if
+# archived) unpacked to dest. Add a binary here when a skill or workflow
+# needs a CLI tool the base image doesn't already carry.
+
+version: 1
+
+binaries: []
+
+# Example entry (uncomment and adjust) — pins the GitHub CLI by release asset:
+# binaries:
+#   - name: gh
+#     version: v2.96.0
+#     source: github_release
+#     repo: cli/cli
+#     asset: gh_2.96.0_linux_amd64.tar.gz
+#     sha256: 83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
+#     archive: tar.gz
+#     archive_path: gh_2.96.0_linux_amd64/bin/gh
+#     dest: /data/bin/gh

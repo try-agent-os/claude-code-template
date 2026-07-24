@@ -1,32 +1,45 @@
 #cloud-config
-# AgentOS cloud-init -- used by the "Deploy to DigitalOcean" button in README
-# and any other one-click cloud provider that supports cloud-init user_data.
+# AgentOS node -- cloud-init for the "Deploy to DigitalOcean" button in README,
+# and any other cloud provider that accepts cloud-init user_data.
 #
-# Two-stage flow:
-#   1. cloud-init (this file) runs at first boot: installs apt prereqs, clones
-#      the template, and prints connection instructions to /etc/motd.
-#   2. User SSH's in and runs `sudo bash /opt/agent-os-bootstrap/install.sh`.
-#      The wizard prompts for TG_BOT_TOKEN / CLAUDE_CODE_OAUTH_TOKEN / etc.
+# WHAT THIS FILE DOES (first boot, no secrets involved):
+#   1. Installs base packages and Docker Engine + the compose plugin.
+#   2. Pre-stages the public AgentOS installer at
+#      /opt/agentos-bootstrap/install.sh so you can read it before you run it.
+#   3. Prints the one remaining command to /etc/motd.
 #
-# Why two-stage? Cloud providers don't safely template secrets into user_data
-# from a URL -- the deploy URL would have to leak tokens through the browser
-# history. Cloud-init does the prep that doesn't need secrets; the install
-# wizard prompts for them on the user's terminal under their control.
+# WHAT YOU DO (one SSH command, once):
+#   ssh root@<droplet-ip>
+#   bash /opt/agentos-bootstrap/install.sh --no-https --token <BOT_TOKEN> --admin <YOUR_TELEGRAM_ID>
+#   Then DM your bot and send /login to connect Claude. That is it.
 #
-# To pre-fill non-secret answers, set them as env vars in /etc/profile.d/
-# before the user runs install.sh -- they'll be picked up via Step 2 wizard
-# state.
+# WHY TWO STAGES (and not a fully hands-off boot): the deploy URL is fetched by
+# the cloud provider and lands in your browser history, so it must never carry
+# secrets. cloud-init does every step that needs no secret; you supply the bot
+# token and your Telegram id on your own terminal, under your control.
 #
-# IMPORTANT: this file MUST be pure 7-bit ASCII. cloud-init's strict YAML 1.1
-# parser rejects non-ASCII bytes ("unacceptable character #x0080") and silently
-# skips runcmd, leaving /opt/agent-os-bootstrap empty. CI lints this.
+# WHAT GETS INSTALLED: the installer resolves the "stable" release channel to an
+# exact prebuilt image (the AgentOS node -- a public, amd64-only OCI image) and
+# PULLS it. Nothing is compiled on this machine, and no private repository is
+# accessed. The installer also installs Docker itself if the step below was
+# skipped, so this file degrades safely if get.docker.com is briefly down.
+#
+# HTTPS is optional: the bot long-polls Telegram, so --no-https gives a fully
+# working bot behind NAT with no domain and no open ports. HTTPS (--domain
+# your.host.name, with a DNS A record pointing here) only adds the Mini App,
+# which Telegram refuses to open on anything but a public https origin.
+#
+# IMPORTANT: keep this file PURE 7-BIT ASCII. cloud-init's YAML 1.1 parser
+# rejects non-ASCII bytes ("unacceptable character #x0080") and then silently
+# skips runcmd, leaving /opt/agentos-bootstrap empty. No smart quotes, no em
+# dashes, no box-drawing characters, no check marks -- plain ASCII only. CI
+# should lint this.
 
 package_update: true
-package_upgrade: false  # full upgrade adds 2-3 minutes; install.sh runs apt-get update anyway
+package_upgrade: false  # a full upgrade adds minutes; the installer runs apt-get update anyway
 
 packages:
   - curl
-  - git
   - ca-certificates
   - jq
 
@@ -37,34 +50,56 @@ write_files:
     content: |
 
       =============================================================
-       AgentOS template provisioned. Finish setup with:
+       AgentOS node provisioned. One command finishes setup:
 
-         sudo bash /opt/agent-os-bootstrap/install.sh
+         bash /opt/agentos-bootstrap/install.sh --no-https --token <BOT_TOKEN> --admin <YOUR_TELEGRAM_ID>
 
-       The wizard will prompt for:
-         * Telegram BotFather token (from @BotFather -> /newbot)
-         * Anthropic OAuth token (run `claude setup-token` on Mac)
-         * Optional: project slug, timezone, whisper model
+       Fill in:
+         <BOT_TOKEN>         from @BotFather -> /newbot
+         <YOUR_TELEGRAM_ID>  from @userinfobot (this auto-approves you as admin)
 
-       Once finished, send any message to your Telegram bot and
-       the operator will reply.
+       Prefer to read the installer first? It is already on disk:
+         less /opt/agentos-bootstrap/install.sh
+
+       The command pulls the prebuilt AgentOS node image and starts
+       your Telegram bot. Nothing is compiled here.
+
+       Then connect Claude WITHOUT SSH: DM your bot and send
+         /login
+       (admin-only, private chat). Send any message next; it replies.
+
+       Want the Mini App too? Point a DNS A record at this host and
+       swap --no-https for --domain your.host.name (open ports 80+443).
 
        Docs: https://github.com/try-agent-os/claude-code-template
       =============================================================
 
-  - path: /etc/profile.d/agent-os-bootstrap.sh
+  - path: /etc/profile.d/agentos-bootstrap.sh
     permissions: '0644'
     owner: root:root
     content: |
-      # AgentOS bootstrap path -- point users at the install wizard on first login.
-      export AGENT_OS_BOOTSTRAP=/opt/agent-os-bootstrap
-      if [ -d "$AGENT_OS_BOOTSTRAP" ] && [ ! -f /etc/agent-os/install.state.json ]; then
-        echo "AgentOS template ready. Run: sudo bash $AGENT_OS_BOOTSTRAP/install.sh"
+      # Remind on every login until the node is actually installed. The
+      # installer writes /opt/agentos/.env on success, so its presence is the
+      # "done" signal.
+      if [ ! -f /opt/agentos/.env ] && [ -f /opt/agentos-bootstrap/install.sh ]; then
+        echo "AgentOS: finish setup ->"
+        echo "  bash /opt/agentos-bootstrap/install.sh --no-https --token <BOT_TOKEN> --admin <YOUR_TELEGRAM_ID>"
       fi
 
 runcmd:
-  - mkdir -p /opt/agent-os-bootstrap
-  - git clone --depth 1 https://github.com/try-agent-os/claude-code-template /opt/agent-os-bootstrap || true
-  - chmod +x /opt/agent-os-bootstrap/install.sh
-  # Drop a hint into /root/.bash_profile too, in case MOTD is suppressed.
-  - echo '[ -f /etc/profile.d/agent-os-bootstrap.sh ] && . /etc/profile.d/agent-os-bootstrap.sh' >> /root/.bashrc
+  # 1. Docker Engine + compose plugin. The installer would do this itself if
+  #    missing, so every command here is guarded to be non-fatal: a transient
+  #    failure must not abort runcmd and leave the installer un-staged. The
+  #    real safety net is the installer's own get.docker.com step.
+  - sh -c 'curl -fsSL https://get.docker.com | sh' || true
+  - systemctl enable --now docker || true
+  # 2. Pre-stage the PUBLIC AgentOS installer (from the public distribution
+  #    repo, not the private source tree). It resolves the stable channel to an
+  #    image digest and pulls it. Staged locally so the user can inspect it
+  #    before running; the installer re-resolves the channel at run time, so a
+  #    slightly older copy of this script still installs the current release.
+  - mkdir -p /opt/agentos-bootstrap
+  - curl -fsSL https://raw.githubusercontent.com/try-agent-os/agentos/main/install.sh -o /opt/agentos-bootstrap/install.sh || true
+  - chmod +x /opt/agentos-bootstrap/install.sh || true
+  # 3. Surface the login hint even when the SSH client suppresses /etc/motd.
+  - echo '[ -f /etc/profile.d/agentos-bootstrap.sh ] && . /etc/profile.d/agentos-bootstrap.sh' >> /root/.bashrc

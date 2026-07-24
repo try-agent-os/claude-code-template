@@ -1,85 +1,19 @@
-.worktrees/
-/.claude/worktrees/
-.DS_Store
-
-# ─────────────────────────────────────────────────────────────────────────
-# Runtime memory — user data, NEVER commit even by accident.
-# EVERYTHING under memory/ is ignored except the committed template skeleton:
-# schemas (*_template.md, .keep) and the files whitelisted by name below.
-# Anything filled in by the operator at runtime stays local to the deploy.
-# ─────────────────────────────────────────────────────────────────────────
-/memory/**
-!/memory/**/
-!/memory/**/_template.md
-!/memory/**/.keep
-!/memory/owner._template.md
-!/memory/postmortems/TEMPLATE.md
-!/memory/proposals/README.md
-
-# Runtime logs / audit trails / session state — high-churn, low-signal-to-noise.
-# Policy: ephemeral cursors / dedup state / runtime locks are NOT history —
-# they churn on every tick and only produce merge noise. Append-only logs you
-# actually analyze later may stay tracked (with periodic rotation); pure
-# position-markers never should.
-/logs/
-/log/
-/var/log/
-operator.log
-operator-errors.log
-dispatcher.log
-saga-mcp.log
-telegram-mcp*.log
-*.session.jsonl
-/.claude/audit.log
-/.claude/scheduled_tasks.lock
-CHANGELOG.md.lock
-/.claude/settings.local.json
-/.claude/agent-memory/
-
-# Secrets — agent-os.env lives at /etc/agent-os, not in repo, but defence in depth.
+# --- AgentOS repo-sync contract: runtime data and credentials never commit ---
+data/
 .env
 .env.*
-!.env.example
-agent-os.env
+.aop/
+.claude/
 *.pem
 *.key
-!*.pub.key
-id_rsa*
-id_ed25519*
-!*.pub
+*credential*
+*secret*
+.session-state.json
 
-# Plugin runtime state — SQLite DBs are runtime, never commit (any location).
-plugins/telegram/messages.db
-plugins/telegram/messages.db-*
-plugins/claude-peers/*.db
-plugins/claude-peers/*.db-*
-**/messages.db
-**/messages.db-*
-plugins/*/dist/
-plugins/*/node_modules/
+# Managed-repo clones (declared in .agentos/workspace.yaml)
+workspace/*/
+!workspace/.gitkeep
 
-# Dagu runtime cache — binary index rebuilt from *.yaml on each start, pure churn.
-/routines/.dag.index
-
-# Local per-host binaries (gh, etc.) — installed per machine, not shared via git.
-/bin/
-
-# Build output
-node_modules/
-dist/
-*.tsbuildinfo
-**/__pycache__/
-*.pyc
-*.pid
-
-# OS
+# OS noise
+.DS_Store
 Thumbs.db
-
-# pr-leak-scan config: your real names/domains/hosts/ids — i.e. exactly the data
-# the scanner exists to keep out of a public repo. Ignored by default so it can
-# never be published by accident. If YOUR repo is private and you want the gate to
-# survive a fresh clone, commit it deliberately: git add -f .pr-leak-scan.json
-.pr-leak-scan.json
-
-# Credential liveness probe config (holds YOUR integration list; env var NAMES only)
-.integration-liveness.json

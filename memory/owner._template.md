@@ -1,38 +1,33 @@
 ---
 name: ""
-occupation: ""
-goals: []
-active_projects: []
-onboarded_at: ""
-completed_flows: []
+role: ""
+timezone: ""
 preferred_name: ""
 ---
 
 # Owner Profile
 
-This file is filled by the operator during onboarding (Phase 2 — survey).
-Managed via the onboarding skill — edit via `/profile edit` command in Telegram.
+Copy this file to `memory/owner.md` and fill it in — this is what the agent
+keeps in mind about who it's working for. Keep it short; expand over time as
+the agent learns more, rather than trying to fill it out all at once.
 
-## Survey data
+## Basics
 
-**Name / preferred address:** (filled during onboarding)
+- **Name / preferred address:**
+- **Role:**
+- **Timezone:**
 
-**Profession / roles:**
+## Communication preferences
 
-**Goals for the next month:**
+How you like updates delivered — channel, tone, frequency, when to
+interrupt versus batch into a summary.
 
-**Active projects:**
+## Current focus
 
-## Configured integrations
+What you're working on right now. Update as it shifts; this is meant to
+stay current, not to accumulate history.
 
-List of flows completed during onboarding or later:
+## Key people
 
-- [ ] Productivity (Singularity + Calendar + Gmail)
-- [ ] Email (Gmail OAuth)
-- [ ] Calendar & reminders
-- [ ] Docs & notes
-- [ ] Work chats
-
-## Operator notes
-
-(operator adds context as it works with the user)
+Short list of people the agent should recognize by name and know how they
+relate to you. Full profiles belong in `memory/people/`, not here.

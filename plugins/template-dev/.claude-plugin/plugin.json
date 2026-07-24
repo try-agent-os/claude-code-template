@@ -1,7 +1,0 @@
-{
-  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "template-dev",
-  "version": "0.1.0",
-  "description": "Fork-ahead workflow for AgentOS template: bootstrap personal repo from template, sync upstream updates, manage template-managed vs personal-owned files.",
-  "category": "agentos-core"
-}

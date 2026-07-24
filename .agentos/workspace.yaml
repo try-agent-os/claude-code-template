@@ -1,0 +1,16 @@
+# Managed-repos manifest. The node's workspace-bootstrap routine reads this
+# file on boot and after each repo sync, then clones (or fast-forwards) each
+# entry into workspace/<path>. Clones are gitignored (see `workspace/*/` in
+# .gitignore) — only this manifest is committed. Add a repo here to have the
+# node check it out and keep it up to date automatically.
+
+version: 1
+
+repos: []
+
+# Example entry (uncomment and adjust):
+# repos:
+#   - name: my-project
+#     url: https://github.com/<owner>/my-project.git
+#     branch: main
+#     path: workspace/my-project

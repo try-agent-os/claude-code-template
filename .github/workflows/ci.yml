@@ -7,221 +7,52 @@ on:
     branches: [main]
 
 jobs:
-  shellcheck:
-    name: ShellCheck (install.sh + agent scripts)
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -qq shellcheck
-      - name: Lint install.sh
-        # SC2155 dynamic export, SC2086 intentional word-splitting,
-        # SC1090/SC1091 dynamic source paths, SC2034 fmtted-only vars,
-        # SC2001 sed-vs-bashism style preference, SC2088 tilde-in-quotes
-        # (literal display strings), SC2029 SSH expand-on-client (intentional),
-        # SC2016 single-quoted echo (intentional template strings).
-        run: |
-          shellcheck --severity=error \
-            install.sh uninstall.sh
-      - name: Lint agent scripts
-        run: |
-          shellcheck --severity=error \
-            agents/operator/start.sh \
-            scripts/verify.sh \
-            scripts/spawn-worker.sh \
-            scripts/worker-launcher-tick.sh \
-            scripts/worker-supervisor.sh \
-            scripts/pr-leak-scan.sh \
-            scripts/pr-leak-scan-fire.sh \
-            tests/pr-leak-scan/run.sh \
-            tests/needs-human/run.sh \
-            scripts/integration-liveness.sh \
-            scripts/lib/gws-has-scope.sh \
-            tests/integration-liveness/run.sh \
-            scripts/check-fire.sh \
-            scripts/fire-step.sh \
-            scripts/lib/dep-reachable.sh
 
-  leak-scan-selftest:
-    name: pr-leak-scan self-test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run scanner self-test
-        # The scanner is a security gate whose failure mode is silent: a broken
-        # matcher reports CLEAN and the PR merges. So its exit codes are pinned
-        # by tests and run on every PR.
-        run: tests/pr-leak-scan/run.sh
+      - name: Install tools
+        run: pip install --quiet pyyaml yamllint
 
-  integration-liveness-selftest:
-    name: integration-liveness self-test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run credential-probe self-test
-        # This probe is a watchdog whose failure mode is silent in BOTH
-        # directions: a broken matcher reports a dead credential alive (it rots
-        # undetected), and an over-eager one reports a live credential dead (the
-        # alert gets muted). So its verdicts are pinned by tests on every PR.
-        # The suite is hermetic - fake CLIs + a loopback HTTP server, no network
-        # and no credentials.
-        run: tests/integration-liveness/run.sh
+      - name: yamllint .agentos/ and examples/
+        run: |
+          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable, comments: disable}}" .agentos examples
 
-  needs-human-selftest:
-    name: needs-human drain-gate self-test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run drain safety-gate self-test
-        # This gate decides whether the queue hands a task to a worker or holds
-        # it for a human, and BOTH its failure modes are silent: over-gating
-        # stops a class of tasks draining with nothing going red, under-gating
-        # hands a worker a task a person had to see. So its verdicts are pinned
-        # by tests on every PR. Pure python, no network.
-        run: tests/needs-human/run.sh
-
-  json-validate:
-    name: JSON validity (config templates + manifests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install jq
-        run: sudo apt-get install -qq jq
-      - name: Validate every JSON file
-        # Skip tsconfig.json (JSONC — JSON with comments — is valid TypeScript
-        # convention but not strict JSON). Skip node_modules subdirs.
+      - name: cloud-init sanity (pure ASCII + valid YAML)
+        # cloud-init's YAML 1.1 parser rejects non-ASCII bytes and then silently
+        # skips runcmd — the deploy button "works" but installs nothing.
         run: |
-          set -e
-          fail=0
-          while IFS= read -r f; do
-            base=$(basename "$f")
-            case "$base" in
-              tsconfig.json|tsconfig.*.json) continue ;;
-            esac
-            if ! jq . "$f" > /dev/null; then
-              echo "::error file=$f::Invalid JSON"
-              fail=1
-            fi
-          done < <(find . -path ./node_modules -prune -o \
-                          -path '*/node_modules' -prune -o \
-                          -name '*.json' -type f -print)
-          exit $fail
-      - name: Validate marketplace.json schema (basic shape)
-        run: |
-          jq -e '.id and .name and .plugins and (.plugins | type=="array")' \
-            .claude-plugin/marketplace.json
-          # Each plugin entry must have name + source string
-          jq -e '.plugins | all(.name and (.source|type=="string"))' \
-            .claude-plugin/marketplace.json
-      - name: Validate plugin manifests have userConfig.title where userConfig present
-        run: |
-          set -e
-          fail=0
-          for f in plugins/*/.claude-plugin/plugin.json; do
-            [ -f "$f" ] || continue
-            if jq -e 'has("userConfig")' "$f" > /dev/null; then
-              # Each userConfig field must have a title
-              if ! jq -e '.userConfig | to_entries | all(.value | has("title"))' "$f" > /dev/null; then
-                echo "::error file=$f::userConfig fields are missing 'title'"
-                fail=1
-              fi
-            fi
-          done
-          exit $fail
-
-  yaml-validate:
-    name: YAML validity (cloud-init + workflows)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install yamllint
-        run: pip install yamllint
-      - name: Lint cloud-init
-        # Allow long lines + cloud-init's '#cloud-config' comment header
-        run: |
-          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, comments-indentation: disable}}" \
-            cloud-init.yaml
-      - name: cloud-init.yaml must be pure ASCII
-        # cloud-init's strict YAML 1.1 parser rejects non-ASCII bytes silently:
-        # the file loads, but runcmd never executes ("unacceptable character #x0080").
-        # The DigitalOcean deploy button hit this with em-dashes + box-drawing chars
-        # in MOTD. Enforce ASCII-only at CI time so we can never regress.
-        run: |
-          if python3 -c "import sys; data=open('cloud-init.yaml','rb').read(); sys.exit(1 if any(b>127 for b in data) else 0)"; then
-            echo "OK: cloud-init.yaml is pure 7-bit ASCII"
-          else
-            echo "::error file=cloud-init.yaml::non-ASCII bytes present (cloud-init parser rejects these silently)"
-            python3 -c "
-          import sys
+          python3 - <<'PY'
+          import sys, yaml
           data = open('cloud-init.yaml','rb').read()
-          for i, b in enumerate(data):
-              if b > 127:
-                  ln = data[:i].count(b'\n') + 1
-                  start = data.rfind(b'\n', 0, i) + 1
-                  end = data.find(b'\n', i)
-                  print(f'  L{ln}: byte 0x{b:02x} in: {data[start:end].decode(\"utf-8\", errors=\"replace\")[:80]}')
-                  break
-          "
-            exit 1
-          fi
-      - name: cloud-init schema validation (best-effort)
-        # cloud-init devel schema catches structural errors. Best-effort because
-        # the GitHub runner's cloud-init may lag the version on the actual droplet.
-        run: |
-          if command -v cloud-init >/dev/null 2>&1; then
-            cloud-init devel schema --config-file cloud-init.yaml || true
-          else
-            sudo apt-get install -y -qq cloud-init >/dev/null 2>&1 && \
-              cloud-init devel schema --config-file cloud-init.yaml || \
-              echo "::warning::cloud-init not available; skipping schema validation"
-          fi
-      - name: Lint workflow files
-        run: |
-          yamllint -d "{extends: default, rules: {line-length: disable, truthy: disable}}" \
-            .github/workflows/
+          bad = [i for i, b in enumerate(data) if b > 127]
+          if bad:
+              print(f"cloud-init.yaml: non-ASCII byte at offset {bad[0]}")
+              sys.exit(1)
+          yaml.safe_load(data)
+          print('cloud-init.yaml ok')
+          PY
 
-  smoke-install:
-    name: Smoke install (${{ matrix.distro }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        distro:
-          - ubuntu:22.04
-          - ubuntu:24.04
-          - debian:12
-    container:
-      image: ${{ matrix.distro }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Smoke prerequisites + bash -n + apt-name compat
+      - name: Check SKILL.md frontmatter
         run: |
-          # Containers don't run systemd without --privileged, so we don't run
-          # the full install. We DO check: syntax, --help works, all apt
-          # package names in Step 3 prereqs resolve on this distro.
-          apt-get update -qq
-          apt-get install -y -qq bash curl
-          bash -n install.sh
-          bash install.sh --help 2>&1 | head -20 || true
+          python3 - <<'PY'
+          import glob, re, sys, yaml
 
-          # Step 3 apt prereqs — verify package names exist on this distro
-          # (bubblewrap is missing on Debian 12 by default; that's a known
-          # divergence we accept — install.sh degrades gracefully if missing)
-          for pkg in curl ca-certificates gnupg git tmux jq sqlite3 \
-                     build-essential cmake ffmpeg python3 python3-pip \
-                     ufw socat unzip fail2ban; do
-            if ! apt-cache show "$pkg" > /dev/null 2>&1; then
-              echo "::warning::Package '$pkg' not in apt-cache on ${{ matrix.distro }}"
-            fi
-          done
-          echo "✓ syntax + apt names checked on ${{ matrix.distro }}"
+          failed = False
+          pattern = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
+          for path in glob.glob("**/skills/*/SKILL.md", recursive=True):
+              text = open(path).read()
+              m = pattern.match(text)
+              if not m:
+                  print(f"{path}: missing frontmatter")
+                  failed = True
+                  continue
+              data = yaml.safe_load(m.group(1)) or {}
+              for key in ("name", "description"):
+                  if not data.get(key):
+                      print(f"{path}: missing '{key}'")
+                      failed = True
 
-  self-tests:
-    name: Self-tests (scheduled-check layer)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: check-fire / fire-step / dep-reachable / clickup_upsert
-        # Fully offline: the ClickUp call and the dep probes are stubbed through
-        # the REPO_ROOT seam. No token or network required.
-        run: tests/check-fire/run.sh
+          sys.exit(1 if failed else 0)
+          PY

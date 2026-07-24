@@ -1,0 +1,28 @@
+# Example workflow. To enable it, copy this file into .agentos/workflows/ and
+# adjust the cron, timezone, and prompt to taste — the node picks it up on
+# the next repo sync.
+
+name: morning-brief
+description: Weekday morning summary of the day ahead, sent as a short brief.
+
+on:
+  schedule:
+    cron: "0 8 * * 1-5"
+    timezone: Europe/Lisbon
+    catch_up: run_once
+
+steps:
+  - name: brief
+    agent:
+      prompt: |
+        Prepare a short morning brief. Start by reading memory/ for context
+        (owner profile, people, open threads) before pulling anything live.
+
+        Cover, in order, and skip a section if it's empty:
+        - Today's calendar: time and title for each meeting.
+        - Open tasks that are urgent or due today.
+        - People who replied or were owed a reply more than 24h ago and
+          haven't been followed up on.
+
+        Keep the whole brief under 15 lines. No filler, no restating the
+        date twice, no section headers for empty sections.
