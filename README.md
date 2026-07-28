@@ -26,13 +26,13 @@ back to git.
 | Path | What lives here |
 |---|---|
 | `CLAUDE.md` | The instance charter — the agent's standing instructions. Yours to edit. |
-| `.agentos/` | Machine config the node reads: `workspace.yaml` (managed repos), `deps.yaml` (extra binaries), `workflows/` (scheduled routines) |
+| `.agentos/` | Machine config the node reads: `workspace.yaml` (managed repos), `deps.yaml` (extra binaries), `routines/` (scheduled routines) |
 | `agents/` | Sub-agent definitions and prompts |
 | `skills/` | Live skills of this instance (Claude Code skill format) |
 | `memory/` | Durable memory the agent curates — owner profile, people, decisions |
 | `workspace/` | The agent's working files; clones of managed repos (gitignored) |
 | `data/` | Runtime scratch — gitignored, never committed |
-| `examples/` | Reference skills and workflows to copy from |
+| `examples/` | Reference skills and routines to copy from |
 
 This layout is the node's canonical contract: connecting an **empty** repo
 scaffolds exactly this skeleton. The template starts you with the same skeleton
@@ -48,7 +48,7 @@ plus documentation and examples.
    [try-agent-os/agentos](https://github.com/try-agent-os/agentos) — or use the
    DigitalOcean button below.
 4. Talk to your agent in Telegram — and teach it: skills go to `skills/`,
-   scheduled routines to `.agentos/workflows/`, knowledge to `memory/`.
+   scheduled routines to `.agentos/routines/`, knowledge to `memory/`.
 
 ## Deploy to DigitalOcean
 

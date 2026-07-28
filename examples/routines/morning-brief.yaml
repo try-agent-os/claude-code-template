@@ -1,4 +1,4 @@
-# Example workflow. To enable it, copy this file into .agentos/workflows/ and
+# Example routine. To enable it, copy this file into .agentos/routines/ and
 # adjust the cron, timezone, and prompt to taste — the node picks it up on
 # the next repo sync.
 

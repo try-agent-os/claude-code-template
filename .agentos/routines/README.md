@@ -1,4 +1,4 @@
-# Workflows
+# Routines
 
 File-defined scheduled routines. Every `*.yaml` in this directory is a
 routine: the node's reconciler reads the directory on boot and after each
@@ -34,5 +34,5 @@ steps:
   downtime instead of silently skipping it.
 - `steps` — ordered list; each step names an agent and gives it a prompt.
 
-See [`examples/workflows/`](../../examples/workflows/) for a complete,
+See [`examples/routines/`](../../examples/routines/) for a complete,
 realistic starting point.
