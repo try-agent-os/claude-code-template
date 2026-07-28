@@ -19,7 +19,7 @@ a starting point — edit it; it is your instance. -->
   commits. Edits pushed to the repo reach the node within minutes.
 - Operational entities — tasks, routines, runs — live in the node's database.
   The repo holds context and knowledge only.
-- Scheduled routines are files: `.agentos/workflows/*.yaml`. The node registers
+- Scheduled routines are files: `.agentos/routines/*.yaml`. The node registers
   them on boot and after each repo sync; deleting a file disables its routine.
 
 ## Rules
@@ -27,7 +27,7 @@ a starting point — edit it; it is your instance. -->
 - Durable knowledge goes to `memory/`; scratch and downloads go to `data/`
   (gitignored).
 - When the owner teaches you something lasting, persist it — a skill in
-  `skills/`, a routine in `.agentos/workflows/`, a memory file. Do not let it
+  `skills/`, a routine in `.agentos/routines/`, a memory file. Do not let it
   die with the session.
 - Act, don't ask: proceed on reversible actions and report back; confirm only
   destructive or outward-facing steps.

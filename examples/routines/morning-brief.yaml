@@ -1,4 +1,4 @@
-# Example workflow. To enable it, copy this file into .agentos/workflows/ and
+# Example routine. To enable it, copy this file into .agentos/routines/ and
 # adjust the cron, timezone, and prompt to taste — the node picks it up on
 # the next repo sync.
 
@@ -13,7 +13,13 @@ on:
 
 steps:
   - name: brief
+    # `operator` delivers into the conversation you are already having, so the
+    # brief arrives as a message. The default, `isolated`, runs the step in a
+    # session of its own and leaves the result in the run log — right for a
+    # routine that only needs to do work, wrong for one whose whole point is
+    # to tell you something.
     agent:
+      session: operator
       prompt: |
         Prepare a short morning brief. Start by reading memory/ for context
         (owner profile, people, open threads) before pulling anything live.

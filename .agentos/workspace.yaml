@@ -1,8 +1,7 @@
-# Managed-repos manifest. The node's workspace-bootstrap routine reads this
-# file on boot and after each repo sync, then clones (or fast-forwards) each
-# entry into workspace/<path>. Clones are gitignored (see `workspace/*/` in
-# .gitignore) — only this manifest is committed. Add a repo here to have the
-# node check it out and keep it up to date automatically.
+# Managed-repos manifest. This file is read by a `workspace-bootstrap` routine,
+# which is NOT shipped in this template — add one to `.agentos/routines/` if you
+# want clones kept up to date automatically. The core itself does not read this
+# file. Clones are gitignored; only this manifest is committed.
 
 version: 1
 

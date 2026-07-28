@@ -1,4 +1,4 @@
-# Workflows
+# Routines
 
 File-defined scheduled routines. Every `*.yaml` in this directory is a
 routine: the node's reconciler reads the directory on boot and after each
@@ -20,6 +20,7 @@ on:
 steps:
   - name: brief
     agent:
+      session: operator
       prompt: |
         Multiline prompt for the agent running this step. Describe the goal,
         what to read first (memory/, recent tasks, etc.), and the shape of
@@ -33,6 +34,11 @@ steps:
 - `on.schedule.catch_up` — `run_once` replays a single missed firing after
   downtime instead of silently skipping it.
 - `steps` — ordered list; each step names an agent and gives it a prompt.
+- `steps[].agent.session` — `operator` delivers the step into the conversation
+  you are already having, so its answer arrives as a message. The default,
+  `isolated`, runs the step in a session of its own and leaves the result in
+  the run log. Anything whose point is to *tell you something* wants
+  `operator`; background work that only needs to happen wants the default.
 
-See [`examples/workflows/`](../../examples/workflows/) for a complete,
+See [`examples/routines/`](../../examples/routines/) for a complete,
 realistic starting point.
